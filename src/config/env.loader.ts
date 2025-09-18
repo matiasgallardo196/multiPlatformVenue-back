@@ -19,3 +19,8 @@ export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 export const CLOUDINARY_UPLOAD_FOLDER =
   process.env.CLOUDINARY_UPLOAD_FOLDER || 'multiPlatformVenue/persons';
+
+// Auth
+export const JWT_SECRET = process.env.JWT_SECRET || 'change_me';
+export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+export const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 10);

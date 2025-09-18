@@ -2,6 +2,7 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { PORT } from './config/env.loader';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -9,9 +10,11 @@ async function bootstrap() {
   app.enableCors({
     origin: ['http://localhost:3000'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: ['Content-Type', 'Accept'],
-    credentials: false,
+    allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+    credentials: true,
   });
+
+  app.use(cookieParser());
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
   app.useGlobalPipes(

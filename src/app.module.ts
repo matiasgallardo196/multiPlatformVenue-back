@@ -7,6 +7,8 @@ import { BannedModule } from './module/banned/banned.module';
 import { IncidentModule } from './module/incident/incident.module';
 import { PlaceModule } from './module/place/place.module';
 import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
+import { AuthModule } from './module/auth/auth.module';
+import { UserModule } from './module/user/user.module';
 
 @Module({
   imports: [
@@ -16,6 +18,8 @@ import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
     IncidentModule,
     PlaceModule,
     CloudinaryModule,
+    AuthModule,
+    UserModule,
   ],
   controllers: [AppController],
   providers: [AppService],
