@@ -97,7 +97,12 @@ export class BannedService {
 
   async findAll(): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
-      relations: ['incident', 'incident.person', 'bannedPlaces'],
+      relations: [
+        'incident',
+        'incident.person',
+        'incident.place',
+        'bannedPlaces',
+      ],
     });
     return list;
   }
@@ -105,7 +110,12 @@ export class BannedService {
   async findOne(id: string): Promise<Banned> {
     const banned = await this.bannedRepository.findOne({
       where: { id },
-      relations: ['incident', 'incident.person', 'bannedPlaces'],
+      relations: [
+        'incident',
+        'incident.person',
+        'incident.place',
+        'bannedPlaces',
+      ],
     });
     if (!banned) throw new NotFoundException('Baneo no encontrado');
     return banned;
@@ -132,7 +142,12 @@ export class BannedService {
   async findByPerson(personId: string): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
       where: { incident: { person: { id: personId } } },
-      relations: ['incident', 'incident.person', 'bannedPlaces'],
+      relations: [
+        'incident',
+        'incident.person',
+        'incident.place',
+        'bannedPlaces',
+      ],
       order: { startingDate: 'DESC' },
     });
     return list;
