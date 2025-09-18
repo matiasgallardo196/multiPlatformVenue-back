@@ -6,6 +6,7 @@ import { PersonModule } from './module/person/person.module';
 import { BannedModule } from './module/banned/banned.module';
 import { IncidentModule } from './module/incident/incident.module';
 import { PlaceModule } from './module/place/place.module';
+import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { PlaceModule } from './module/place/place.module';
     BannedModule,
     IncidentModule,
     PlaceModule,
+    CloudinaryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
