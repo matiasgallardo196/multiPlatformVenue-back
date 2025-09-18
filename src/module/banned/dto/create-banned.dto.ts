@@ -1,4 +1,11 @@
-import { IsISO8601, IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import {
+  IsArray,
+  IsISO8601,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateBannedDto {
   @IsUUID()
@@ -15,4 +22,9 @@ export class CreateBannedDto {
 
   @IsString()
   motive?: string;
+
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  @IsOptional()
+  placeIds?: string[];
 }

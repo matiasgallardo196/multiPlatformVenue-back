@@ -1,8 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  In,
+  IsNull,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { Banned } from 'src/shared/entities/banned.entity';
 import { Incident } from 'src/shared/entities/incident.entity';
+import { BannedPlace } from 'src/shared/entities/bannedPlace.entity';
+import { Place } from 'src/shared/entities/place.entity';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 
@@ -13,6 +21,10 @@ export class BannedService {
     private readonly bannedRepository: Repository<Banned>,
     @InjectRepository(Incident)
     private readonly incidentRepository: Repository<Incident>,
+    @InjectRepository(BannedPlace)
+    private readonly bannedPlaceRepository: Repository<BannedPlace>,
+    @InjectRepository(Place)
+    private readonly placeRepository: Repository<Place>,
   ) {}
 
   // isActive se expone desde la entidad con @Expose, no se persiste
@@ -61,8 +73,25 @@ export class BannedService {
       payload.endingDate ?? null,
     );
     const banned = this.bannedRepository.create(payload);
-
     const saved = await this.bannedRepository.save(banned);
+
+    if (data.placeIds && data.placeIds.length > 0) {
+      const places = await this.placeRepository.find({
+        where: { id: In(data.placeIds) },
+      });
+      if (places.length !== data.placeIds.length) {
+        throw new NotFoundException('Alguno de los lugares no existe');
+      }
+      const links = places.map((place) =>
+        this.bannedPlaceRepository.create({
+          bannedId: saved.id,
+          placeId: place.id,
+          banned: saved,
+          place,
+        }),
+      );
+      await this.bannedPlaceRepository.save(links);
+    }
     return saved;
   }
 

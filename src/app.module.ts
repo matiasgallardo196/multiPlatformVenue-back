@@ -4,9 +4,17 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './db/database.module';
 import { PersonModule } from './module/person/person.module';
 import { BannedModule } from './module/banned/banned.module';
+import { IncidentModule } from './module/incident/incident.module';
+import { PlaceModule } from './module/place/place.module';
 
 @Module({
-  imports: [DatabaseModule, PersonModule, BannedModule],
+  imports: [
+    DatabaseModule,
+    PersonModule,
+    BannedModule,
+    IncidentModule,
+    PlaceModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
