@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { Banned } from 'src/shared/entities/banned.entity';
-import { Person } from 'src/shared/entities/person.entity';
+import { Incident } from 'src/shared/entities/incident.entity';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 
@@ -11,8 +11,8 @@ export class BannedService {
   constructor(
     @InjectRepository(Banned)
     private readonly bannedRepository: Repository<Banned>,
-    @InjectRepository(Person)
-    private readonly personRepository: Repository<Person>,
+    @InjectRepository(Incident)
+    private readonly incidentRepository: Repository<Incident>,
   ) {}
 
   // isActive se expone desde la entidad con @Expose, no se persiste
@@ -44,15 +44,16 @@ export class BannedService {
   }
 
   async create(data: CreateBannedDto): Promise<Banned> {
-    const person = await this.personRepository.findOne({
-      where: { id: data.personId },
+    const incident = await this.incidentRepository.findOne({
+      where: { id: data.incidentId },
+      relations: ['person'],
     });
-    if (!person) throw new NotFoundException('Persona no encontrada');
+    if (!incident) throw new NotFoundException('Incidente no encontrado');
 
     const payload: Partial<Banned> = {
       startingDate: new Date(data.startingDate as any),
       motive: data.motive,
-      person,
+      incident,
       endingDate: new Date(data.endingDate as any),
     };
     payload.howlong = this.computeHowLong(
@@ -67,7 +68,7 @@ export class BannedService {
 
   async findAll(): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
-      relations: ['person', 'bannedPlaces'],
+      relations: ['incident', 'incident.person', 'bannedPlaces'],
     });
     return list;
   }
@@ -75,7 +76,7 @@ export class BannedService {
   async findOne(id: string): Promise<Banned> {
     const banned = await this.bannedRepository.findOne({
       where: { id },
-      relations: ['person', 'bannedPlaces'],
+      relations: ['incident', 'incident.person', 'bannedPlaces'],
     });
     if (!banned) throw new NotFoundException('Baneo no encontrado');
     return banned;
@@ -101,8 +102,8 @@ export class BannedService {
 
   async findByPerson(personId: string): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
-      where: { person: { id: personId } },
-      relations: ['person', 'bannedPlaces'],
+      where: { incident: { person: { id: personId } } },
+      relations: ['incident', 'incident.person', 'bannedPlaces'],
       order: { startingDate: 'DESC' },
     });
     return list;
@@ -115,16 +116,17 @@ export class BannedService {
     const activeCount = await this.bannedRepository.count({
       where: [
         {
-          person: { id: personId },
+          incident: { person: { id: personId } },
           startingDate: LessThanOrEqual(now),
           endingDate: IsNull(),
         },
         {
-          person: { id: personId },
+          incident: { person: { id: personId } },
           startingDate: LessThanOrEqual(now),
           endingDate: MoreThanOrEqual(now),
         },
       ],
+      relations: ['incident', 'incident.person'],
     });
     return { personId, isBanned: activeCount > 0, activeCount };
   }

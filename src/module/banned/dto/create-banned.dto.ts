@@ -3,7 +3,7 @@ import { IsISO8601, IsNotEmpty, IsString, IsUUID } from 'class-validator';
 export class CreateBannedDto {
   @IsUUID()
   @IsNotEmpty()
-  personId: string;
+  incidentId: string;
 
   @IsISO8601()
   @IsNotEmpty()

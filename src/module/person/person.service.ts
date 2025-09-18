@@ -19,14 +19,14 @@ export class PersonService {
 
   async findAll(): Promise<Person[]> {
     return this.personRepository.find({
-      relations: ['incidents', 'banneds'],
+      relations: ['incidents', 'incidents.banned'],
     });
   }
 
   async findOne(id: string): Promise<Person> {
     const person = await this.personRepository.findOne({
       where: { id },
-      relations: ['incidents', 'banneds'],
+      relations: ['incidents', 'incidents.banned'],
     });
     if (!person) throw new NotFoundException('Persona no encontrada');
     return person;

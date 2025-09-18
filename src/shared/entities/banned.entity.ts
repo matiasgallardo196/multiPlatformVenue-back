@@ -1,14 +1,14 @@
 import {
   Column,
   Entity,
-  ManyToOne,
   PrimaryGeneratedColumn,
   JoinColumn,
   OneToMany,
+  OneToOne,
 } from 'typeorm';
 import { Expose } from 'class-transformer';
-import { Person } from './person.entity';
 import { BannedPlace } from './bannedPlace.entity';
+import { Incident } from './incident.entity';
 
 @Entity()
 export class Banned {
@@ -39,9 +39,12 @@ export class Banned {
 
   // howlong se persiste como objeto { years, months, days }
 
-  @ManyToOne(() => Person, (person) => person.banneds, { nullable: true })
-  @JoinColumn({ name: 'personId' })
-  person: Person;
+  @OneToOne(() => Incident, (incident) => incident.banned, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'incidentId' })
+  incident: Incident;
 
   @OneToMany(() => BannedPlace, (bannedPlace) => bannedPlace.banned)
   bannedPlaces: BannedPlace[];
