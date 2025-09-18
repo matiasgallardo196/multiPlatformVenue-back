@@ -16,9 +16,6 @@ export class Person {
   @Column({ type: 'varchar', length: 255, nullable: true })
   nickname: string;
 
-  @Column({ type: 'boolean', default: false })
-  isBanned: boolean;
-
   @Column({
     type: 'text',
     array: true,
