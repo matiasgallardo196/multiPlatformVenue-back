@@ -22,6 +22,13 @@ export class Person {
   })
   imagenProfileUrl: string[];
 
+  @Column({
+    type: 'enum',
+    enum: ['Male', 'Female'],
+    nullable: true,
+  })
+  gender: 'Male' | 'Female' | null;
+
   @OneToMany(() => Incident, (incident) => incident.person)
   incidents: Incident[];
 }

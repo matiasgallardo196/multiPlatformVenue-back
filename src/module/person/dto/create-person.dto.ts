@@ -1,4 +1,4 @@
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class CreatePersonDto {
   @IsOptional()
@@ -17,4 +17,8 @@ export class CreatePersonDto {
   @IsArray()
   @IsString({ each: true })
   imagenProfileUrl?: string[];
+
+  @IsOptional()
+  @IsIn(['Male', 'Female'])
+  gender?: 'Male' | 'Female';
 }
