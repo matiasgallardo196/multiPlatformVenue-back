@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Incident } from 'src/shared/entities/incident.entity';
@@ -86,6 +90,17 @@ export class IncidentService {
   }
 
   async remove(id: string): Promise<void> {
+    // Load with relations to decide if it's safe to delete
+    const incident = await this.incidentRepository.findOne({
+      where: { id },
+      relations: ['banned'],
+    });
+    if (!incident) throw new NotFoundException('Incident not found');
+    if (incident.banned) {
+      throw new ConflictException(
+        'Cannot delete this incident because it has a related ban.',
+      );
+    }
     const result = await this.incidentRepository.delete(id);
     if (result.affected === 0)
       throw new NotFoundException('Incident not found');
