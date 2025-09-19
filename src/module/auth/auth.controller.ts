@@ -27,9 +27,11 @@ export class AuthController {
   ) {
     const result = await this.auth.login(body.userName, body.password);
     // Set HttpOnly cookie
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('accessToken', result.accessToken, {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: isProd ? ('none' as any) : ('lax' as any),
+      secure: isProd,
       path: '/',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7d
     });
@@ -39,9 +41,11 @@ export class AuthController {
   @Public()
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('accessToken', '', {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: isProd ? ('none' as any) : ('lax' as any),
+      secure: isProd,
       path: '/',
       maxAge: 0,
     });
