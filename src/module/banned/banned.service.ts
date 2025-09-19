@@ -66,6 +66,17 @@ export class BannedService {
     });
     if (!incident) throw new NotFoundException('Incident not found');
 
+    // Enforce one-to-one: prevent duplicate bans for the same incident
+    const existing = await this.bannedRepository.findOne({
+      where: { incident: { id: data.incidentId } },
+      relations: ['incident'],
+    });
+    if (existing) {
+      throw new ConflictException(
+        'This incident already has an associated ban.',
+      );
+    }
+
     const payload: Partial<Banned> = {
       startingDate: new Date(data.startingDate as any),
       motive: data.motive,
