@@ -31,7 +31,12 @@
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "^0.3.26"
+    "typeorm": "^0.3.26",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/passport": "^11.0.5",
+    "bcryptjs": "^3.0.2",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
