@@ -10,6 +10,7 @@ import {
 import { AuthService } from './auth.service';
 import { Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
+import { Public } from './public.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -18,6 +19,7 @@ export class AuthController {
     private readonly jwt: JwtService,
   ) {}
 
+  @Public()
   @Post('login')
   async login(
     @Body() body: { userName: string; password: string },
@@ -34,6 +36,7 @@ export class AuthController {
     return { user: result.user };
   }
 
+  @Public()
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
     res.cookie('accessToken', '', {
@@ -45,6 +48,7 @@ export class AuthController {
     return { ok: true };
   }
 
+  @Public()
   @Get('me')
   async me(@Req() req: any) {
     const token: string | undefined = req.cookies?.['accessToken'];

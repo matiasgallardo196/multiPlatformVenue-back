@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Public } from '../auth/public.decorator';
 import { UserService } from './user.service';
 import * as bcrypt from 'bcryptjs';
 import { BCRYPT_SALT_ROUNDS } from 'src/config/env.loader';
@@ -7,6 +8,7 @@ import { BCRYPT_SALT_ROUNDS } from 'src/config/env.loader';
 export class UserController {
   constructor(private readonly users: UserService) {}
 
+  @Public()
   @Post('seed-admin')
   async seedAdmin(
     @Body() body: { userName: string; password: string; role?: string },

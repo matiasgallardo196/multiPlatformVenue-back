@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
 import { BannedService } from './banned.service';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
@@ -15,6 +16,7 @@ import { UpdateBannedDto } from './dto/update-banned.dto';
 export class BannedController {
   constructor(private readonly bannedService: BannedService) {}
 
+  @Roles('manager')
   @Post()
   create(@Body() body: CreateBannedDto) {
     return this.bannedService.create(body);
@@ -30,11 +32,13 @@ export class BannedController {
     return this.bannedService.findOne(id);
   }
 
+  @Roles('manager')
   @Patch(':id')
   update(@Param('id') id: string, @Body() body: UpdateBannedDto) {
     return this.bannedService.update(id, body);
   }
 
+  @Roles('manager')
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.bannedService.remove(id);

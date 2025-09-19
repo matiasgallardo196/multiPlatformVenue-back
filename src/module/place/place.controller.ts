@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
 import { PlaceService } from './place.service';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
@@ -15,6 +16,7 @@ import { UpdatePlaceDto } from './dto/update-place.dto';
 export class PlaceController {
   constructor(private readonly placeService: PlaceService) {}
 
+  @Roles('manager')
   @Post()
   create(@Body() body: CreatePlaceDto) {
     return this.placeService.create(body);
@@ -30,11 +32,13 @@ export class PlaceController {
     return this.placeService.findOne(id);
   }
 
+  @Roles('manager')
   @Patch(':id')
   update(@Param('id') id: string, @Body() body: UpdatePlaceDto) {
     return this.placeService.update(id, body);
   }
 
+  @Roles('manager')
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.placeService.remove(id);
