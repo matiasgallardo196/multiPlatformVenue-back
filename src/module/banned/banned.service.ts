@@ -145,13 +145,7 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // If there are linked places, prevent delete with clear reason
-    const hasLinkedPlaces = (banned.bannedPlaces?.length || 0) > 0;
-    if (hasLinkedPlaces) {
-      throw new ConflictException(
-        'Cannot delete this ban because it is linked to one or more places.',
-      );
-    }
+    // With onDelete: 'CASCADE' on BannedPlace.banned, we can allow delete and related bannedPlaces will be removed
 
     const result = await this.bannedRepository.delete(id);
     if (result.affected === 0) throw new NotFoundException('Ban not found');

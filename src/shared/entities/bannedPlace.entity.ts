@@ -10,7 +10,9 @@ export class BannedPlace {
   @PrimaryColumn('uuid')
   placeId: string;
 
-  @ManyToOne(() => Banned, (banned) => banned.bannedPlaces)
+  @ManyToOne(() => Banned, (banned) => banned.bannedPlaces, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'bannedId' })
   banned: Banned;
 
