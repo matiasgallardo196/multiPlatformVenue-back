@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   In,
@@ -134,9 +138,23 @@ export class BannedService {
   }
 
   async remove(id: string): Promise<void> {
+    // Load with relations to ensure existence and provide clear message
+    const banned = await this.bannedRepository.findOne({
+      where: { id },
+      relations: ['bannedPlaces', 'incident'],
+    });
+    if (!banned) throw new NotFoundException('Ban not found');
+
+    // If there are linked places, prevent delete with clear reason
+    const hasLinkedPlaces = (banned.bannedPlaces?.length || 0) > 0;
+    if (hasLinkedPlaces) {
+      throw new ConflictException(
+        'Cannot delete this ban because it is linked to one or more places.',
+      );
+    }
+
     const result = await this.bannedRepository.delete(id);
-    if (result.affected === 0)
-      throw new NotFoundException('Baneo no encontrado');
+    if (result.affected === 0) throw new NotFoundException('Ban not found');
   }
 
   async findByPerson(personId: string): Promise<Banned[]> {
