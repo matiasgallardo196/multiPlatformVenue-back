@@ -60,7 +60,7 @@ export class BannedService {
       where: { id: data.incidentId },
       relations: ['person'],
     });
-    if (!incident) throw new NotFoundException('Incidente no encontrado');
+    if (!incident) throw new NotFoundException('Incident not found');
 
     const payload: Partial<Banned> = {
       startingDate: new Date(data.startingDate as any),
@@ -117,13 +117,13 @@ export class BannedService {
         'bannedPlaces',
       ],
     });
-    if (!banned) throw new NotFoundException('Baneo no encontrado');
+    if (!banned) throw new NotFoundException('Ban not found');
     return banned;
   }
 
   async update(id: string, data: UpdateBannedDto): Promise<Banned> {
     const banned = await this.bannedRepository.findOne({ where: { id } });
-    if (!banned) throw new NotFoundException('Baneo no encontrado');
+    if (!banned) throw new NotFoundException('Ban not found');
     Object.assign(banned, data);
     banned.howlong = this.computeHowLong(
       banned.startingDate,

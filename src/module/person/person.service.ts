@@ -28,7 +28,7 @@ export class PersonService {
       where: { id },
       relations: ['incidents', 'incidents.banned'],
     });
-    if (!person) throw new NotFoundException('Persona no encontrada');
+    if (!person) throw new NotFoundException('Person not found');
     return person;
   }
 
@@ -40,7 +40,6 @@ export class PersonService {
 
   async remove(id: string): Promise<void> {
     const result = await this.personRepository.delete(id);
-    if (result.affected === 0)
-      throw new NotFoundException('Persona no encontrada');
+    if (result.affected === 0) throw new NotFoundException('Person not found');
   }
 }

@@ -25,14 +25,14 @@ export class IncidentService {
       const personEntity = await this.personRepository.findOne({
         where: { id: data.personId },
       });
-      if (!personEntity) throw new NotFoundException('Persona no encontrada');
+      if (!personEntity) throw new NotFoundException('Person not found');
       person = personEntity;
     }
     if (data.placeId) {
       const placeEntity = await this.placeRepository.findOne({
         where: { id: data.placeId },
       });
-      if (!placeEntity) throw new NotFoundException('Lugar no encontrado');
+      if (!placeEntity) throw new NotFoundException('Place not found');
       place = placeEntity;
     }
 
@@ -56,26 +56,26 @@ export class IncidentService {
       where: { id },
       relations: ['person', 'place', 'banned'],
     });
-    if (!incident) throw new NotFoundException('Incidente no encontrado');
+    if (!incident) throw new NotFoundException('Incident not found');
     return incident;
   }
 
   async update(id: string, data: UpdateIncidentDto): Promise<Incident> {
     const incident = await this.incidentRepository.findOne({ where: { id } });
-    if (!incident) throw new NotFoundException('Incidente no encontrado');
+    if (!incident) throw new NotFoundException('Incident not found');
 
     if (data.personId) {
       const person = await this.personRepository.findOne({
         where: { id: data.personId },
       });
-      if (!person) throw new NotFoundException('Persona no encontrada');
+      if (!person) throw new NotFoundException('Person not found');
       incident.person = person;
     }
     if (data.placeId) {
       const place = await this.placeRepository.findOne({
         where: { id: data.placeId },
       });
-      if (!place) throw new NotFoundException('Lugar no encontrado');
+      if (!place) throw new NotFoundException('Place not found');
       incident.place = place;
     }
 
@@ -88,6 +88,6 @@ export class IncidentService {
   async remove(id: string): Promise<void> {
     const result = await this.incidentRepository.delete(id);
     if (result.affected === 0)
-      throw new NotFoundException('Incidente no encontrado');
+      throw new NotFoundException('Incident not found');
   }
 }
