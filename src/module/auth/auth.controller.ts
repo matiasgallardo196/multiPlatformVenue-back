@@ -11,7 +11,7 @@ import { AuthService } from './auth.service';
 import { Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { Public } from './public.decorator';
-import { NODE_ENV } from './config/env.loader';
+import { NODE_ENV } from '../../config/env.loader';
 
 @Controller('auth')
 export class AuthController {
