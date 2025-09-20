@@ -11,6 +11,7 @@ import { AuthService } from './auth.service';
 import { Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { Public } from './public.decorator';
+import { NODE_ENV } from './config/env.loader';
 
 @Controller('auth')
 export class AuthController {
@@ -27,7 +28,7 @@ export class AuthController {
   ) {
     const result = await this.auth.login(body.userName, body.password);
     // Set HttpOnly cookie
-    const isProd = process.env.NODE_ENV === 'production';
+    const isProd = NODE_ENV === 'production';
     res.cookie('accessToken', result.accessToken, {
       httpOnly: true,
       sameSite: isProd ? ('none' as any) : ('lax' as any),
