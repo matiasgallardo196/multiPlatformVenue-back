@@ -1,30 +1,63 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcryptjs';
+import { supabaseClient } from '../../config/supabase';
 import { UserService } from '../user/user.service';
 
 @Injectable()
 export class AuthService {
-  constructor(
-    private readonly users: UserService,
-    private readonly jwt: JwtService,
-  ) {}
+  constructor(private readonly userService: UserService) {}
 
-  async validateUser(userName: string, password: string) {
-    const user = await this.users.findByUserName(userName);
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
-    return user;
-  }
+  /**
+   * Valida un token de Supabase y retorna la información del usuario
+   * vinculado con la tabla users de la base de datos
+   */
+  async validateToken(token: string) {
+    if (!token) {
+      console.error('[AuthService] No token provided');
+      throw new UnauthorizedException('No token provided');
+    }
 
-  async login(userName: string, password: string) {
-    const user = await this.validateUser(userName, password);
-    const payload = { sub: user.id, userName: user.userName, role: user.role };
-    const accessToken = await this.jwt.signAsync(payload);
-    return {
-      accessToken,
-      user: { id: user.id, userName: user.userName, role: user.role },
-    };
+    if (!supabaseClient) {
+      console.error('[AuthService] Supabase client not configured');
+    }
+
+    try {
+      const {
+        data: { user: supabaseUser },
+        error,
+      } = await supabaseClient!.auth.getUser(token);
+
+      if (error || !supabaseUser) {
+        console.error('[AuthService] Invalid token:', error);
+        throw new UnauthorizedException('Invalid token');
+      }
+
+      // Obtener o crear el usuario en la base de datos
+      const userName =
+        supabaseUser.user_metadata?.userName ||
+        supabaseUser.email?.split('@')[0] ||
+        '';
+      const role = supabaseUser.user_metadata?.role || 'staff';
+
+      const dbUser = await this.userService.createOrUpdateFromSupabase(
+        supabaseUser.id,
+        supabaseUser.email || '',
+        userName,
+        role,
+      );
+
+      return {
+        userId: dbUser.id, // ID de la base de datos
+        supabaseUserId: dbUser.supabaseUserId, // ID de Supabase
+        userName: dbUser.userName,
+        email: dbUser.email || '',
+        role: dbUser.role,
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      console.error('[AuthService] Error validating token:', error);
+      throw new UnauthorizedException('Invalid or expired token');
+    }
   }
 }
