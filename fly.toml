@@ -2,7 +2,7 @@ app = "multiPlatformVenue-back"
 primary_region = "syd"
 
 [http_service]
-  internal_port = 3001            # <-- usa el puerto real de tu app
+  internal_port = 3001            # <-- usa el puerto real d e tu app
   force_https = true
   auto_stop_machines = true
   auto_start_machines = true
