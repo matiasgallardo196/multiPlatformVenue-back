@@ -25,8 +25,7 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(PORT);
-
+  await app.listen(PORT ? Number(PORT) : 3001, '0.0.0.0');
   console.log(`🚀 App listening on port ${PORT}`);
 }
 bootstrap();
