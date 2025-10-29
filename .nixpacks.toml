@@ -1,0 +1,5 @@
+providers = ["node"]
+
+[phases.setup]
+# elegí uno:
+nixPkgs = ["nodejs_20", "npm-10_x"]
