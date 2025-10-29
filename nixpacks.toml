@@ -1,0 +1,19 @@
+providers = ["node"]
+
+[phases.setup]
+# Solo Node 22. NO agregues npm aquí.
+nixPkgs = ["nodejs_22"]
+# Quita el overlay que mete npm-9_x.
+nixOverlays = []
+
+[phases.install]
+cmds = [
+  "node -v && npm -v",   # para verificar que ya es npm 10.x
+  "npm ci"
+]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/main.js"
