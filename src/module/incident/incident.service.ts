@@ -51,14 +51,14 @@ export class IncidentService {
 
   async findAll(): Promise<Incident[]> {
     return this.incidentRepository.find({
-      relations: ['person', 'place', 'banned'],
+      relations: ['person', 'place'],
     });
   }
 
   async findOne(id: string): Promise<Incident> {
     const incident = await this.incidentRepository.findOne({
       where: { id },
-      relations: ['person', 'place', 'banned'],
+      relations: ['person', 'place'],
     });
     if (!incident) throw new NotFoundException('Incident not found');
     return incident;
@@ -90,17 +90,10 @@ export class IncidentService {
   }
 
   async remove(id: string): Promise<void> {
-    // Load with relations to decide if it's safe to delete
     const incident = await this.incidentRepository.findOne({
       where: { id },
-      relations: ['banned'],
     });
     if (!incident) throw new NotFoundException('Incident not found');
-    if (incident.banned) {
-      throw new ConflictException(
-        'Cannot delete this incident because it has a related ban.',
-      );
-    }
     const result = await this.incidentRepository.delete(id);
     if (result.affected === 0)
       throw new NotFoundException('Incident not found');

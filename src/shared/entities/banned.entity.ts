@@ -4,11 +4,11 @@ import {
   PrimaryGeneratedColumn,
   JoinColumn,
   OneToMany,
-  OneToOne,
+  ManyToOne,
 } from 'typeorm';
 import { Expose } from 'class-transformer';
 import { BannedPlace } from './bannedPlace.entity';
-import { Incident } from './incident.entity';
+import { Person } from './person.entity';
 
 @Entity()
 export class Banned {
@@ -39,12 +39,12 @@ export class Banned {
 
   // howlong se persiste como objeto { years, months, days }
 
-  @OneToOne(() => Incident, (incident) => incident.banned, {
+  @ManyToOne(() => Person, (person) => person.banneds, {
     nullable: false,
     onDelete: 'CASCADE',
   })
-  @JoinColumn({ name: 'incidentId' })
-  incident: Incident;
+  @JoinColumn({ name: 'personId' })
+  person: Person;
 
   @OneToMany(() => BannedPlace, (bannedPlace) => bannedPlace.banned)
   bannedPlaces: BannedPlace[];

@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from './roles.decorator';
+import { UserRole } from '../user/user.entity';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -15,17 +16,21 @@ export class RolesGuard implements CanActivate {
       return true; // No roles required
     }
     const request = context.switchToHttp().getRequest();
-    const user = request.user as { role?: string } | undefined;
+    const user = request.user as { role?: string | UserRole } | undefined;
     if (!user?.role) return false;
 
+    // Convertir role a string (los valores del enum ya son strings)
+    const userRoleString =
+      typeof user.role === 'string' ? user.role : (user.role as UserRole);
+
     // head-manager tiene todos los permisos de manager + los suyos propios
-    if (user.role === 'head-manager') {
+    if (userRoleString === UserRole.HEAD_MANAGER) {
       return (
-        requiredRoles.includes('head-manager') ||
-        requiredRoles.includes('manager')
+        requiredRoles.includes(UserRole.HEAD_MANAGER) ||
+        requiredRoles.includes(UserRole.MANAGER)
       );
     }
 
-    return requiredRoles.includes(user.role);
+    return requiredRoles.includes(userRoleString);
   }
 }

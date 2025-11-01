@@ -23,14 +23,14 @@ export class PersonService {
 
   async findAll(): Promise<Person[]> {
     return this.personRepository.find({
-      relations: ['incidents', 'incidents.banned'],
+      relations: ['incidents'],
     });
   }
 
   async findOne(id: string): Promise<Person> {
     const person = await this.personRepository.findOne({
       where: { id },
-      relations: ['incidents', 'incidents.banned'],
+      relations: ['incidents'],
     });
     if (!person) throw new NotFoundException('Person not found');
     return person;
@@ -46,21 +46,15 @@ export class PersonService {
     // Load with relations to provide descriptive error if there are incidents
     const person = await this.personRepository.findOne({
       where: { id },
-      relations: ['incidents', 'incidents.banned'],
+      relations: ['incidents'],
     });
     if (!person) throw new NotFoundException('Person not found');
 
     const hasIncidents = (person.incidents?.length || 0) > 0;
     if (hasIncidents) {
-      // Check if any incident has a ban to tailor message
-      const hasBannedIncident = person.incidents?.some((i: any) => !!i.banned);
-      let reason = 'Cannot delete this person because ';
-      if (hasBannedIncident) {
-        reason += 'they have related incidents (some with bans).';
-      } else {
-        reason += 'they have related incidents.';
-      }
-      throw new ConflictException(reason);
+      throw new ConflictException(
+        'Cannot delete this person because they have related incidents.',
+      );
     }
 
     const result = await this.personRepository.delete(id);

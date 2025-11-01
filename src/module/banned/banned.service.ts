@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -12,7 +11,7 @@ import {
   Repository,
 } from 'typeorm';
 import { Banned } from 'src/shared/entities/banned.entity';
-import { Incident } from 'src/shared/entities/incident.entity';
+import { Person } from 'src/shared/entities/person.entity';
 import { BannedPlace } from 'src/shared/entities/bannedPlace.entity';
 import { Place } from 'src/shared/entities/place.entity';
 import { CreateBannedDto } from './dto/create-banned.dto';
@@ -23,8 +22,8 @@ export class BannedService {
   constructor(
     @InjectRepository(Banned)
     private readonly bannedRepository: Repository<Banned>,
-    @InjectRepository(Incident)
-    private readonly incidentRepository: Repository<Incident>,
+    @InjectRepository(Person)
+    private readonly personRepository: Repository<Person>,
     @InjectRepository(BannedPlace)
     private readonly bannedPlaceRepository: Repository<BannedPlace>,
     @InjectRepository(Place)
@@ -60,27 +59,15 @@ export class BannedService {
   }
 
   async create(data: CreateBannedDto): Promise<Banned> {
-    const incident = await this.incidentRepository.findOne({
-      where: { id: data.incidentId },
-      relations: ['person'],
+    const person = await this.personRepository.findOne({
+      where: { id: data.personId },
     });
-    if (!incident) throw new NotFoundException('Incident not found');
-
-    // Enforce one-to-one: prevent duplicate bans for the same incident
-    const existing = await this.bannedRepository.findOne({
-      where: { incident: { id: data.incidentId } },
-      relations: ['incident'],
-    });
-    if (existing) {
-      throw new ConflictException(
-        'This incident already has an associated ban.',
-      );
-    }
+    if (!person) throw new NotFoundException('Person not found');
 
     const payload: Partial<Banned> = {
       startingDate: new Date(data.startingDate as any),
       motive: data.motive,
-      incident,
+      person,
       endingDate: new Date(data.endingDate as any),
     };
     payload.howlong = this.computeHowLong(
@@ -112,12 +99,7 @@ export class BannedService {
 
   async findAll(): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
-      relations: [
-        'incident',
-        'incident.person',
-        'incident.place',
-        'bannedPlaces',
-      ],
+      relations: ['person', 'bannedPlaces'],
     });
     return list;
   }
@@ -125,12 +107,7 @@ export class BannedService {
   async findOne(id: string): Promise<Banned> {
     const banned = await this.bannedRepository.findOne({
       where: { id },
-      relations: [
-        'incident',
-        'incident.person',
-        'incident.place',
-        'bannedPlaces',
-      ],
+      relations: ['person', 'bannedPlaces'],
     });
     if (!banned) throw new NotFoundException('Ban not found');
     return banned;
@@ -152,7 +129,7 @@ export class BannedService {
     // Load with relations to ensure existence and provide clear message
     const banned = await this.bannedRepository.findOne({
       where: { id },
-      relations: ['bannedPlaces', 'incident'],
+      relations: ['bannedPlaces', 'person'],
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
@@ -164,13 +141,8 @@ export class BannedService {
 
   async findByPerson(personId: string): Promise<Banned[]> {
     const list = await this.bannedRepository.find({
-      where: { incident: { person: { id: personId } } },
-      relations: [
-        'incident',
-        'incident.person',
-        'incident.place',
-        'bannedPlaces',
-      ],
+      where: { person: { id: personId } },
+      relations: ['person', 'bannedPlaces'],
       order: { startingDate: 'DESC' },
     });
     return list;
@@ -183,17 +155,16 @@ export class BannedService {
     const activeCount = await this.bannedRepository.count({
       where: [
         {
-          incident: { person: { id: personId } },
+          person: { id: personId },
           startingDate: LessThanOrEqual(now),
           endingDate: IsNull(),
         },
         {
-          incident: { person: { id: personId } },
+          person: { id: personId },
           startingDate: LessThanOrEqual(now),
           endingDate: MoreThanOrEqual(now),
         },
       ],
-      relations: ['incident', 'incident.person'],
     });
     return { personId, isBanned: activeCount > 0, activeCount };
   }

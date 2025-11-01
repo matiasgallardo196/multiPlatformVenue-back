@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { supabaseClient } from '../../config/supabase';
 import { UserService } from '../user/user.service';
+import { UserRole } from '../user/user.entity';
 
 @Injectable()
 export class AuthService {
@@ -36,7 +37,8 @@ export class AuthService {
         supabaseUser.user_metadata?.userName ||
         supabaseUser.email?.split('@')[0] ||
         '';
-      const role = supabaseUser.user_metadata?.role || 'staff';
+      const role =
+        supabaseUser.user_metadata?.role || UserRole.STAFF;
 
       const dbUser = await this.userService.createOrUpdateFromSupabase(
         supabaseUser.id,

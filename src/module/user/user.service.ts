@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from './user.entity';
+import { User, UserRole } from './user.entity';
 import { supabaseAdmin } from '../../config/supabase';
 
 @Injectable()
@@ -30,11 +30,17 @@ export class UserService {
     return this.repo.findOne({ where: { email } });
   }
 
-  async create(userName: string, passwordHash: string, role: string) {
+  async create(userName: string, passwordHash: string, role: UserRole | string) {
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
     const user = this.repo.create({
       userName,
       passwordHash,
-      role: role as any,
+      role: userRole,
     });
     return this.repo.save(user);
   }
@@ -43,8 +49,15 @@ export class UserService {
     supabaseUserId: string,
     email: string,
     userName: string,
-    role: string,
+    role: UserRole | string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
     // Buscar si ya existe un usuario con este supabaseUserId
     let user = await this.findBySupabaseId(supabaseUserId);
 
@@ -70,7 +83,7 @@ export class UserService {
           supabaseUserId,
           email,
           userName,
-          role: role as any,
+          role: userRole,
         });
       }
     }
@@ -90,13 +103,22 @@ export class UserService {
   async inviteUserByEmail(
     email: string,
     userName: string,
-    role: string,
+    role: UserRole | string,
     redirectUrl: string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
+    const roleString = userRole as string; // Los valores del enum son strings
+
     console.log('[UserService] Iniciando invitación de usuario:', {
       email,
       userName,
-      role,
+      role: roleString,
       redirectUrl,
     });
 
@@ -120,7 +142,7 @@ export class UserService {
       {
         data: {
           userName,
-          role,
+          role: roleString,
         },
         redirectTo: redirectUrl,
       },
@@ -145,7 +167,7 @@ export class UserService {
     const user = this.repo.create({
       email,
       userName,
-      role: role as any,
+      role: userRole,
       supabaseUserId: data.user?.id,
     });
 
@@ -160,8 +182,17 @@ export class UserService {
     email: string,
     userName: string,
     password: string,
-    role: string,
+    role: UserRole | string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
+    const roleString = userRole as string; // Los valores del enum son strings
+
     if (!supabaseAdmin) {
       throw new Error('Supabase admin client not configured');
     }
@@ -179,7 +210,7 @@ export class UserService {
       email_confirm: true, // Auto-confirmar el email
       user_metadata: {
         userName,
-        role,
+        role: roleString,
       },
     });
 
@@ -192,7 +223,7 @@ export class UserService {
     const user = this.repo.create({
       email,
       userName,
-      role: role as any,
+      role: userRole,
       supabaseUserId: data.user?.id,
     });
 

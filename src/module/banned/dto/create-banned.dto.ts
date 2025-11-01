@@ -10,7 +10,7 @@ import {
 export class CreateBannedDto {
   @IsUUID()
   @IsNotEmpty()
-  incidentId: string;
+  personId: string;
 
   @IsISO8601()
   @IsNotEmpty()
