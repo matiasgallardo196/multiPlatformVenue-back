@@ -15,6 +15,9 @@ export class Banned {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column({ type: 'integer', nullable: false })
+  incidentNumber: number;
+
   @Column({ type: 'timestamptz', nullable: false })
   startingDate: Date;
 
@@ -24,8 +27,29 @@ export class Banned {
   @Column({ type: 'jsonb', nullable: true })
   howlong: { years: string; months: string; days: string } | null;
 
+  @Column({ type: 'jsonb', nullable: false })
+  motive: string[];
+
   @Column({ type: 'varchar', length: 255, nullable: true })
-  motive: string;
+  peopleInvolved: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  incidentReport: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  actionTaken: string | null;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  policeNotified: boolean;
+
+  @Column({ type: 'date', nullable: true })
+  policeNotifiedDate: Date | null;
+
+  @Column({ type: 'time', nullable: true })
+  policeNotifiedTime: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  policeNotifiedEvent: string | null;
 
   @Expose()
   get isActive(): boolean {

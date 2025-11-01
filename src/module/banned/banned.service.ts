@@ -65,8 +65,34 @@ export class BannedService {
     if (!person) throw new NotFoundException('Person not found');
 
     const payload: Partial<Banned> = {
+      incidentNumber: data.incidentNumber,
       startingDate: new Date(data.startingDate as any),
       motive: data.motive,
+      peopleInvolved:
+        data.peopleInvolved && data.peopleInvolved.trim().length > 0
+          ? data.peopleInvolved.trim()
+          : null,
+      incidentReport:
+        data.incidentReport && data.incidentReport.trim().length > 0
+          ? data.incidentReport.trim()
+          : null,
+      actionTaken:
+        data.actionTaken && data.actionTaken.trim().length > 0
+          ? data.actionTaken.trim()
+          : null,
+      policeNotified: data.policeNotified ?? false,
+      policeNotifiedDate:
+        data.policeNotified && data.policeNotifiedDate
+          ? new Date(data.policeNotifiedDate as any)
+          : null,
+      policeNotifiedTime:
+        data.policeNotified && data.policeNotifiedTime
+          ? data.policeNotifiedTime.trim()
+          : null,
+      policeNotifiedEvent:
+        data.policeNotified && data.policeNotifiedEvent
+          ? data.policeNotifiedEvent.trim()
+          : null,
       person,
       endingDate: new Date(data.endingDate as any),
     };
@@ -116,7 +142,67 @@ export class BannedService {
   async update(id: string, data: UpdateBannedDto): Promise<Banned> {
     const banned = await this.bannedRepository.findOne({ where: { id } });
     if (!banned) throw new NotFoundException('Ban not found');
-    Object.assign(banned, data);
+    
+    // Handle optional string fields: convert empty strings to null
+    const updateData = { ...data };
+    if (updateData.peopleInvolved !== undefined) {
+      updateData.peopleInvolved =
+        updateData.peopleInvolved && updateData.peopleInvolved.trim().length > 0
+          ? updateData.peopleInvolved.trim()
+          : null;
+    }
+    if (updateData.incidentReport !== undefined) {
+      updateData.incidentReport =
+        updateData.incidentReport && updateData.incidentReport.trim().length > 0
+          ? updateData.incidentReport.trim()
+          : null;
+    }
+    if (updateData.actionTaken !== undefined) {
+      updateData.actionTaken =
+        updateData.actionTaken && updateData.actionTaken.trim().length > 0
+          ? updateData.actionTaken.trim()
+          : null;
+    }
+
+    // Handle police notified fields
+    const policeNotifiedFields: Partial<Banned> = {};
+    if (updateData.policeNotified !== undefined) {
+      if (updateData.policeNotified === false) {
+        // If set to false, clear all related fields
+        policeNotifiedFields.policeNotifiedDate = null;
+        policeNotifiedFields.policeNotifiedTime = null;
+        policeNotifiedFields.policeNotifiedEvent = null;
+        policeNotifiedFields.policeNotified = false;
+      } else if (updateData.policeNotified === true) {
+        // If set to true, process related fields
+        policeNotifiedFields.policeNotified = true;
+        if (updateData.policeNotifiedDate !== undefined) {
+          policeNotifiedFields.policeNotifiedDate = updateData.policeNotifiedDate
+            ? new Date(updateData.policeNotifiedDate as any)
+            : null;
+        }
+        if (updateData.policeNotifiedTime !== undefined) {
+          policeNotifiedFields.policeNotifiedTime =
+            updateData.policeNotifiedTime &&
+            updateData.policeNotifiedTime.trim().length > 0
+              ? updateData.policeNotifiedTime.trim()
+              : null;
+        }
+        if (updateData.policeNotifiedEvent !== undefined) {
+          policeNotifiedFields.policeNotifiedEvent =
+            updateData.policeNotifiedEvent &&
+            updateData.policeNotifiedEvent.trim().length > 0
+              ? updateData.policeNotifiedEvent.trim()
+              : null;
+        }
+      }
+    }
+    
+    // Remove police notified fields from updateData to avoid type conflicts
+    const { policeNotified, policeNotifiedDate, policeNotifiedTime, policeNotifiedEvent, ...restUpdateData } = updateData;
+    
+    Object.assign(banned, restUpdateData);
+    Object.assign(banned, policeNotifiedFields);
     banned.howlong = this.computeHowLong(
       banned.startingDate,
       banned.endingDate,
