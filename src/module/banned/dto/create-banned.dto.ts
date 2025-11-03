@@ -68,6 +68,6 @@ export class CreateBannedDto {
 
   @IsArray()
   @IsUUID(undefined, { each: true })
-  @IsOptional()
-  placeIds?: string[];
+  @IsNotEmpty()
+  placeIds: string[];
 }

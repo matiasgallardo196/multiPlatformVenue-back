@@ -1,4 +1,5 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Place } from '../../shared/entities/place.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
@@ -32,4 +33,11 @@ export class User {
     default: UserRole.VIEWER,
   })
   role: UserRole;
+
+  @Column({ type: 'uuid', nullable: true })
+  placeId: string | null;
+
+  @ManyToOne(() => Place, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'placeId' })
+  place: Place | null;
 }

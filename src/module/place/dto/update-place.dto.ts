@@ -4,4 +4,8 @@ export class UpdatePlaceDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
 }

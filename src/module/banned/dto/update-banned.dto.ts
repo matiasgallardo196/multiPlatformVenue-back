@@ -59,4 +59,9 @@ export class UpdateBannedDto {
   @IsString()
   @IsOptional()
   policeNotifiedEvent?: string | null;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  placeIds?: string[];
 }

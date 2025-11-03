@@ -47,12 +47,17 @@ export class AuthService {
         role,
       );
 
+      // Obtener usuario completo con relación place
+      const userWithPlace = await this.userService.findById(dbUser.id);
+
       return {
         userId: dbUser.id, // ID de la base de datos
         supabaseUserId: dbUser.supabaseUserId, // ID de Supabase
         userName: dbUser.userName,
         email: dbUser.email || '',
         role: dbUser.role,
+        placeId: userWithPlace?.placeId || null,
+        city: userWithPlace?.place?.city || null,
       };
     } catch (error) {
       if (error instanceof UnauthorizedException) {
