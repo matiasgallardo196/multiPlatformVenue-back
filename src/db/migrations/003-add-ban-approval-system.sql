@@ -68,3 +68,4 @@ CREATE INDEX IF NOT EXISTS "idx_banned_created_by" ON "Banned"("createdByUserId"
 CREATE INDEX IF NOT EXISTS "idx_banned_places_status" ON "BannedPlaces"("status");
 CREATE INDEX IF NOT EXISTS "idx_banned_places_place_status" ON "BannedPlaces"("placeId", "status");
 
+

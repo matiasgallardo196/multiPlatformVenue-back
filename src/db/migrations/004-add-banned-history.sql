@@ -42,3 +42,4 @@ CREATE INDEX IF NOT EXISTS "idx_banned_history_action" ON "BannedHistory"("actio
 CREATE INDEX IF NOT EXISTS "idx_banned_history_place_id" ON "BannedHistory"("placeId");
 
 
+

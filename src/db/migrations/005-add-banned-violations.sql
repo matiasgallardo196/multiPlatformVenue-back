@@ -7,3 +7,4 @@ ALTER TABLE "Banned"
 ADD COLUMN IF NOT EXISTS "violationDates" TIMESTAMPTZ[] NOT NULL DEFAULT '{}';
 
 
+
