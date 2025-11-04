@@ -5,9 +5,13 @@ import { Person } from 'src/shared/entities/person.entity';
 import { Place } from 'src/shared/entities/place.entity';
 import { IncidentService } from './incident.service';
 import { IncidentController } from './incident.controller';
+import { UserModule } from '../user/user.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Incident, Person, Place])],
+  imports: [
+    TypeOrmModule.forFeature([Incident, Person, Place]),
+    UserModule,
+  ],
   providers: [IncidentService],
   controllers: [IncidentController],
 })

@@ -1,5 +1,6 @@
-import { Column, Entity, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, OneToMany, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Incident } from './incident.entity';
+import { Banned } from './banned.entity';
 
 @Entity({ name: 'Persons' })
 export class Person {
@@ -31,4 +32,13 @@ export class Person {
 
   @OneToMany(() => Incident, (incident) => incident.person)
   incidents: Incident[];
+
+  @OneToMany(() => Banned, (banned) => banned.person)
+  banneds: Banned[];
+
+  @CreateDateColumn({ type: 'timestamptz', nullable: false })
+  createdAt: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz', nullable: false })
+  updatedAt: Date;
 }

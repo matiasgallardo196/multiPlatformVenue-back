@@ -4,4 +4,8 @@ export class CreatePlaceDto {
   @IsString()
   @IsNotEmpty()
   name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city: string;
 }

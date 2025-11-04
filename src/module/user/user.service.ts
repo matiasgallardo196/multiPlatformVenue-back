@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from './user.entity';
+import { User, UserRole } from './user.entity';
 import { supabaseAdmin } from '../../config/supabase';
 
 @Injectable()
@@ -19,7 +19,10 @@ export class UserService {
   }
 
   findById(id: string) {
-    return this.repo.findOne({ where: { id } });
+    return this.repo.findOne({ 
+      where: { id },
+      relations: ['place'],
+    });
   }
 
   findBySupabaseId(supabaseUserId: string) {
@@ -30,11 +33,17 @@ export class UserService {
     return this.repo.findOne({ where: { email } });
   }
 
-  async create(userName: string, passwordHash: string, role: string) {
+  async create(userName: string, passwordHash: string, role: UserRole | string) {
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
     const user = this.repo.create({
       userName,
       passwordHash,
-      role: role as any,
+      role: userRole,
     });
     return this.repo.save(user);
   }
@@ -43,8 +52,15 @@ export class UserService {
     supabaseUserId: string,
     email: string,
     userName: string,
-    role: string,
+    role: UserRole | string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
     // Buscar si ya existe un usuario con este supabaseUserId
     let user = await this.findBySupabaseId(supabaseUserId);
 
@@ -70,7 +86,7 @@ export class UserService {
           supabaseUserId,
           email,
           userName,
-          role: role as any,
+          role: userRole,
         });
       }
     }
@@ -78,10 +94,19 @@ export class UserService {
     return this.repo.save(user);
   }
 
-  // Método para listar todos los usuarios
-  async findAll() {
+  // Método para listar todos los usuarios del place del head-manager
+  async findAll(headManagerUserId: string) {
+    const headManager = await this.findById(headManagerUserId);
+    if (!headManager) {
+      throw new NotFoundException('Head manager not found');
+    }
+    if (!headManager.placeId) {
+      throw new ConflictException('Head manager must have a place assigned');
+    }
+
     return this.repo.find({
-      select: ['id', 'userName', 'email', 'role', 'supabaseUserId'],
+      where: { placeId: headManager.placeId },
+      select: ['id', 'userName', 'email', 'role', 'supabaseUserId', 'placeId'],
       order: { userName: 'ASC' },
     });
   }
@@ -90,14 +115,39 @@ export class UserService {
   async inviteUserByEmail(
     email: string,
     userName: string,
-    role: string,
+    role: UserRole | string,
     redirectUrl: string,
+    headManagerUserId: string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
+    // Validar que el rol sea manager o staff
+    if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
+      throw new ConflictException('Only manager or staff roles can be created by head-manager');
+    }
+
+    // Obtener el head-manager y validar que tiene placeId
+    const headManager = await this.findById(headManagerUserId);
+    if (!headManager) {
+      throw new NotFoundException('Head manager not found');
+    }
+    if (!headManager.placeId) {
+      throw new ConflictException('Head manager must have a place assigned');
+    }
+
+    const roleString = userRole as string; // Los valores del enum son strings
+
     console.log('[UserService] Iniciando invitación de usuario:', {
       email,
       userName,
-      role,
+      role: roleString,
       redirectUrl,
+      placeId: headManager.placeId,
     });
 
     if (!supabaseAdmin) {
@@ -120,7 +170,7 @@ export class UserService {
       {
         data: {
           userName,
-          role,
+          role: roleString,
         },
         redirectTo: redirectUrl,
       },
@@ -141,12 +191,13 @@ export class UserService {
       email: data.user?.email,
     });
 
-    // Crear usuario en la base de datos
+    // Crear usuario en la base de datos con placeId del head-manager
     const user = this.repo.create({
       email,
       userName,
-      role: role as any,
+      role: userRole,
       supabaseUserId: data.user?.id,
+      placeId: headManager.placeId,
     });
 
     const savedUser = await this.repo.save(user);
@@ -160,8 +211,32 @@ export class UserService {
     email: string,
     userName: string,
     password: string,
-    role: string,
+    role: UserRole | string,
+    headManagerUserId: string,
   ) {
+    // Convertir string a enum si es necesario
+    const userRole =
+      typeof role === 'string'
+        ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
+          UserRole.VIEWER
+        : role;
+
+    // Validar que el rol sea manager o staff
+    if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
+      throw new ConflictException('Only manager or staff roles can be created by head-manager');
+    }
+
+    // Obtener el head-manager y validar que tiene placeId
+    const headManager = await this.findById(headManagerUserId);
+    if (!headManager) {
+      throw new NotFoundException('Head manager not found');
+    }
+    if (!headManager.placeId) {
+      throw new ConflictException('Head manager must have a place assigned');
+    }
+
+    const roleString = userRole as string; // Los valores del enum son strings
+
     if (!supabaseAdmin) {
       throw new Error('Supabase admin client not configured');
     }
@@ -179,7 +254,7 @@ export class UserService {
       email_confirm: true, // Auto-confirmar el email
       user_metadata: {
         userName,
-        role,
+        role: roleString,
       },
     });
 
@@ -188,35 +263,49 @@ export class UserService {
       throw new Error(`Failed to create user: ${error.message}`);
     }
 
-    // Crear usuario en la base de datos
+    // Crear usuario en la base de datos con placeId del head-manager
     const user = this.repo.create({
       email,
       userName,
-      role: role as any,
+      role: userRole,
       supabaseUserId: data.user?.id,
+      placeId: headManager.placeId,
     });
 
     return this.repo.save(user);
   }
 
-  // Método para eliminar usuario
-  async deleteUser(id: string) {
-    const user = await this.findById(id);
-    if (!user) {
+  // Método para eliminar usuario (solo si pertenece al place del head-manager)
+  async deleteUser(id: string, headManagerUserId: string) {
+    const userToDelete = await this.findById(id);
+    if (!userToDelete) {
       throw new NotFoundException('User not found');
     }
 
+    const headManager = await this.findById(headManagerUserId);
+    if (!headManager) {
+      throw new NotFoundException('Head manager not found');
+    }
+    if (!headManager.placeId) {
+      throw new ConflictException('Head manager must have a place assigned');
+    }
+
+    // Validar que el usuario pertenece al place del head-manager
+    if (userToDelete.placeId !== headManager.placeId) {
+      throw new ConflictException('User does not belong to head manager place');
+    }
+
     // Eliminar de Supabase si tiene supabaseUserId
-    if (user.supabaseUserId && supabaseAdmin) {
+    if (userToDelete.supabaseUserId && supabaseAdmin) {
       try {
-        await supabaseAdmin.auth.admin.deleteUser(user.supabaseUserId);
+        await supabaseAdmin.auth.admin.deleteUser(userToDelete.supabaseUserId);
       } catch (error) {
         console.error('[UserService] Error deleting from Supabase:', error);
       }
     }
 
     // Eliminar de la base de datos
-    await this.repo.remove(user);
+    await this.repo.remove(userToDelete);
     return { message: 'User deleted successfully' };
   }
 }

@@ -4,11 +4,9 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   JoinColumn,
-  OneToOne,
 } from 'typeorm';
 import { Place } from './place.entity';
 import { Person } from './person.entity';
-import { Banned } from './banned.entity';
 
 @Entity({ name: 'Incidents' })
 export class Incident {
@@ -28,7 +26,4 @@ export class Incident {
   @ManyToOne(() => Person, (person) => person.incidents, { nullable: true })
   @JoinColumn({ name: 'personId' })
   person: Person;
-
-  @OneToOne(() => Banned, (banned) => banned.incident, { nullable: true })
-  banned: Banned | null;
 }
