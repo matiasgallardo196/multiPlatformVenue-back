@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { PersonService } from './person.service';
@@ -23,8 +24,32 @@ export class PersonController {
   }
 
   @Get()
-  findAll() {
-    return this.personService.findAll();
+  findAll(
+    @Query('gender') gender?: string,
+    @Query('search') search?: string,
+    @Query('sortBy') sortBy?: string,
+  ) {
+    const filters: {
+      gender?: 'Male' | 'Female' | null;
+      search?: string;
+      sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+    } = {};
+
+    if (gender === 'Male' || gender === 'Female') {
+      filters.gender = gender;
+    } else if (gender === 'null' || gender === '') {
+      filters.gender = null;
+    }
+
+    if (search) {
+      filters.search = search;
+    }
+
+    if (sortBy && ['newest-first', 'oldest-first', 'name-asc', 'name-desc'].includes(sortBy)) {
+      filters.sortBy = sortBy as 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+    }
+
+    return this.personService.findAll(Object.keys(filters).length > 0 ? filters : undefined);
   }
 
   @Get(':id')

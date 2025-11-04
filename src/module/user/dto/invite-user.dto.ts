@@ -9,6 +9,6 @@ export class InviteUserDto {
   @MinLength(3)
   userName: string;
 
-  @IsEnum(['manager', 'staff', 'head-manager'])
+  @IsEnum(UserRole)
   role: UserRole;
 }

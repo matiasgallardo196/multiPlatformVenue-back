@@ -10,6 +10,9 @@ export class Place {
   @Column({ type: 'varchar', length: 255, nullable: true })
   name: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: false })
+  city: string;
+
   @OneToMany(() => Incident, (incident) => incident.place)
   incidents: Incident[];
 

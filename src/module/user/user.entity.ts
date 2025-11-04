@@ -1,12 +1,14 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Place } from '../../shared/entities/place.entity';
 
-export type UserRole =
-  | 'admin'
-  | 'editor'
-  | 'viewer'
-  | 'manager'
-  | 'staff'
-  | 'head-manager';
+export enum UserRole {
+  ADMIN = 'admin',
+  EDITOR = 'editor',
+  VIEWER = 'viewer',
+  MANAGER = 'manager',
+  STAFF = 'staff',
+  HEAD_MANAGER = 'head-manager',
+}
 
 @Entity('users')
 export class User {
@@ -25,6 +27,17 @@ export class User {
   @Column({ type: 'varchar', unique: true, nullable: true })
   supabaseUserId: string; // ID del usuario en Supabase Auth
 
-  @Column({ type: 'varchar', length: 16, default: 'viewer' })
+  @Column({
+    type: 'enum',
+    enum: UserRole,
+    default: UserRole.VIEWER,
+  })
   role: UserRole;
+
+  @Column({ type: 'uuid', nullable: true })
+  placeId: string | null;
+
+  @ManyToOne(() => Place, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'placeId' })
+  place: Place | null;
 }
