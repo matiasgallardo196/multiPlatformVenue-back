@@ -43,3 +43,4 @@ CREATE INDEX IF NOT EXISTS "idx_banned_history_place_id" ON "BannedHistory"("pla
 
 
 
+

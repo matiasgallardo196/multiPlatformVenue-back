@@ -18,7 +18,6 @@ export class CreatePersonDto {
   @IsString({ each: true })
   imagenProfileUrl?: string[];
 
-  @IsOptional()
   @IsIn(['Male', 'Female'])
-  gender?: 'Male' | 'Female';
+  gender: 'Male' | 'Female';
 }

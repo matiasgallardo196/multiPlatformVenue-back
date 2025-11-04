@@ -16,7 +16,7 @@ export class Banned {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'integer', nullable: false })
+  @Column({ type: 'integer', nullable: false, unique: true })
   incidentNumber: number;
 
   @Column({ type: 'timestamptz', nullable: false })

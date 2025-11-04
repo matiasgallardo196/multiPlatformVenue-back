@@ -260,7 +260,17 @@ export class BannedService {
     );
     payload.createdByUserId = userId;
     const banned = this.bannedRepository.create(payload);
-    const saved = await this.bannedRepository.save(banned);
+    let saved: Banned;
+    try {
+      saved = await this.bannedRepository.save(banned);
+    } catch (err: any) {
+      // Unicidad de incidentNumber
+      // Usa excepciones HTTP estándar de NestJS según la guía del proyecto
+      if (err && (err.code === '23505' || /unique/i.test(String(err.message || '')))) {
+        throw new ConflictException('Incident number already exists');
+      }
+      throw err;
+    }
 
     // Crear relaciones con places (solo los disponibles, sin baneos activos)
     const now = new Date();
