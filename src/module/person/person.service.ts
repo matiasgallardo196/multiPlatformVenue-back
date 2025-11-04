@@ -80,10 +80,49 @@ export class PersonService {
     return this.personRepository.save(person);
   }
 
-  async findAll(): Promise<Person[]> {
-    return this.personRepository.find({
-      relations: ['incidents'],
-    });
+  async findAll(filters?: {
+    gender?: 'Male' | 'Female' | null;
+    search?: string;
+    sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+  }): Promise<Person[]> {
+    const queryBuilder = this.personRepository.createQueryBuilder('person')
+      .leftJoinAndSelect('person.incidents', 'incidents');
+
+    // Filtro por género
+    if (filters?.gender !== undefined && filters.gender !== null) {
+      queryBuilder.andWhere('person.gender = :gender', { gender: filters.gender });
+    }
+
+    // Filtro por búsqueda (nombre, apellido, nickname)
+    if (filters?.search && filters.search.trim()) {
+      const searchTerm = `%${filters.search.trim().toLowerCase()}%`;
+      queryBuilder.andWhere(
+        '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+        { search: searchTerm }
+      );
+    }
+
+    // Ordenamiento
+    const sortBy = filters?.sortBy || 'newest-first';
+    switch (sortBy) {
+      case 'oldest-first':
+        queryBuilder.orderBy('person.createdAt', 'ASC');
+        break;
+      case 'name-asc':
+        // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
+        queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
+        break;
+      case 'name-desc':
+        // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
+        queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
+        break;
+      case 'newest-first':
+      default:
+        queryBuilder.orderBy('person.createdAt', 'DESC');
+        break;
+    }
+
+    return queryBuilder.getMany();
   }
 
   async findOne(id: string): Promise<Person> {

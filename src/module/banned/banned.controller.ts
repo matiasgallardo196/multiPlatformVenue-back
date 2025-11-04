@@ -8,6 +8,7 @@ import {
   Post,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { BannedService } from './banned.service';
@@ -42,12 +43,12 @@ export class BannedController {
   }
 
   @Get()
-  findAll(@Req() req: any) {
+  findAll(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findAll(userId);
+    return this.bannedService.findAll(userId, sortBy);
   }
 
   @Roles('manager')

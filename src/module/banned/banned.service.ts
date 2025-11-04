@@ -323,12 +323,46 @@ export class BannedService {
     return saved;
   }
 
-  async findAll(userId: string): Promise<Banned[]> {
+  async findAll(userId: string, sortBy?: string): Promise<Banned[]> {
     // Obtener usuario completo con place
     const user = await this.userService.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    // Función helper para aplicar ordenamiento
+    const applySorting = (queryBuilder: any, sortBy?: string) => {
+      const sort = sortBy || 'violations-desc';
+      switch (sort) {
+        case 'violations-asc':
+          queryBuilder.orderBy('banned.violationsCount', 'ASC');
+          break;
+        case 'starting-date-desc':
+          queryBuilder.orderBy('banned.startingDate', 'DESC');
+          break;
+        case 'starting-date-asc':
+          queryBuilder.orderBy('banned.startingDate', 'ASC');
+          break;
+        case 'ending-date-desc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'DESC');
+          break;
+        case 'ending-date-asc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'ASC');
+          break;
+        case 'person-name-asc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
+          break;
+        case 'person-name-desc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
+          break;
+        case 'violations-desc':
+        default:
+          queryBuilder.orderBy('banned.violationsCount', 'DESC');
+          break;
+      }
+    };
 
     // Si es head-manager, manager o staff, filtrar por city y solo bans aprobados
     if (
@@ -343,7 +377,7 @@ export class BannedService {
 
       // Filtrar por city y solo mostrar bans donde todos los places relevantes están aprobados
       // Un ban es visible si todos sus places que pertenecen a la city del usuario están aprobados
-      return this.bannedRepository
+      const queryBuilder = this.bannedRepository
         .createQueryBuilder('banned')
         .leftJoinAndSelect('banned.person', 'person')
         .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
@@ -351,9 +385,11 @@ export class BannedService {
         .where('place.city = :city', { city: user.place.city })
         .andWhere('bannedPlaces.status = :approvedStatus', {
           approvedStatus: BannedPlaceStatus.APPROVED,
-        })
-        .orderBy('banned.violationsCount', 'DESC')
-        .getMany()
+        });
+      
+      applySorting(queryBuilder, sortBy);
+      
+      return queryBuilder.getMany()
         .then((bans) => {
           // Filtrar para asegurar que todos los places del ban en esa city están aprobados
           return bans.filter((ban) => {
@@ -370,13 +406,15 @@ export class BannedService {
 
     // Para otros roles (admin, editor, viewer), retornar todos los bans aprobados
     // Un ban es visible si todos sus places están aprobados
-    return this.bannedRepository
+    const queryBuilder = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.person', 'person')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-      .leftJoinAndSelect('bannedPlaces.place', 'place')
-      .orderBy('banned.violationsCount', 'DESC')
-      .getMany()
+      .leftJoinAndSelect('bannedPlaces.place', 'place');
+    
+    applySorting(queryBuilder, sortBy);
+    
+    return queryBuilder.getMany()
       .then((bans) => {
         // Filtrar para asegurar que todos los places del ban están aprobados
         return bans.filter((ban) => {
