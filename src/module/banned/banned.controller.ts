@@ -53,22 +53,22 @@ export class BannedController {
 
   @Roles('manager')
   @Get('pending')
-  findPending(@Req() req: any) {
+  findPending(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findPendingByManager(userId);
+    return this.bannedService.findPendingByManager(userId, sortBy);
   }
 
   @Roles('head-manager')
   @Get('approval-queue')
-  findApprovalQueue(@Req() req: any) {
+  findApprovalQueue(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findPendingApprovalsByHeadManager(userId);
+    return this.bannedService.findPendingApprovalsByHeadManager(userId, sortBy);
   }
 
   @Get('person/:personId')

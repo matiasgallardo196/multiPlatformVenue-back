@@ -958,7 +958,7 @@ export class BannedService {
     return banned;
   }
 
-  async findPendingByManager(userId: string): Promise<Banned[]> {
+  async findPendingByManager(userId: string, sortBy?: string): Promise<Banned[]> {
     // Obtener usuario completo
     const user = await this.userService.findById(userId);
     if (!user) {
@@ -971,7 +971,7 @@ export class BannedService {
     }
 
     // Buscar bans creados por el manager que tengan al menos un place pendiente
-    return this.bannedRepository
+    const queryBuilder = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
@@ -988,12 +988,54 @@ export class BannedService {
           })
           .getQuery();
         return `EXISTS ${subQuery}`;
-      })
-      .orderBy('banned.startingDate', 'DESC')
-      .getMany();
+      });
+
+    // Aplicar ordenamiento consistente
+    {
+      const sort = sortBy || 'violations-desc';
+      switch (sort) {
+        case 'violations-asc':
+          queryBuilder.orderBy('banned.violationsCount', 'ASC');
+          break;
+        case 'starting-date-desc':
+          queryBuilder.orderBy('banned.startingDate', 'DESC');
+          break;
+        case 'starting-date-asc':
+          queryBuilder.orderBy('banned.startingDate', 'ASC');
+          break;
+        case 'ending-date-desc':
+          queryBuilder
+            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'DESC');
+          break;
+        case 'ending-date-asc':
+          queryBuilder
+            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'ASC');
+          break;
+        case 'person-name-asc':
+          queryBuilder.orderBy(
+            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
+            'ASC',
+          );
+          break;
+        case 'person-name-desc':
+          queryBuilder.orderBy(
+            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
+            'DESC',
+          );
+          break;
+        case 'violations-desc':
+        default:
+          queryBuilder.orderBy('banned.violationsCount', 'DESC');
+          break;
+      }
+    }
+
+    return queryBuilder.getMany();
   }
 
-  async findPendingApprovalsByHeadManager(userId: string): Promise<Banned[]> {
+  async findPendingApprovalsByHeadManager(userId: string, sortBy?: string): Promise<Banned[]> {
     // Obtener usuario completo con place
     const user = await this.userService.findById(userId);
     if (!user) {
@@ -1011,7 +1053,7 @@ export class BannedService {
     }
 
     // Buscar bans que tengan places pendientes del place del head-manager
-    return this.bannedRepository
+    const queryBuilder = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
@@ -1020,9 +1062,51 @@ export class BannedService {
       .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
       .andWhere('bannedPlaces.status = :pendingStatus', {
         pendingStatus: BannedPlaceStatus.PENDING,
-      })
-      .orderBy('banned.startingDate', 'DESC')
-      .getMany();
+      });
+
+    // Aplicar ordenamiento consistente con /banneds (duplicado aquí)
+    {
+      const sort = sortBy || 'violations-desc';
+      switch (sort) {
+        case 'violations-asc':
+          queryBuilder.orderBy('banned.violationsCount', 'ASC');
+          break;
+        case 'starting-date-desc':
+          queryBuilder.orderBy('banned.startingDate', 'DESC');
+          break;
+        case 'starting-date-asc':
+          queryBuilder.orderBy('banned.startingDate', 'ASC');
+          break;
+        case 'ending-date-desc':
+          queryBuilder
+            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'DESC');
+          break;
+        case 'ending-date-asc':
+          queryBuilder
+            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'ASC');
+          break;
+        case 'person-name-asc':
+          queryBuilder.orderBy(
+            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
+            'ASC',
+          );
+          break;
+        case 'person-name-desc':
+          queryBuilder.orderBy(
+            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
+            'DESC',
+          );
+          break;
+        case 'violations-desc':
+        default:
+          queryBuilder.orderBy('banned.violationsCount', 'DESC');
+          break;
+      }
+    }
+
+    return queryBuilder.getMany();
   }
 
   async getHistory(bannedId: string, userId: string): Promise<BannedHistory[]> {
