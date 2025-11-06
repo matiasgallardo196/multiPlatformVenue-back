@@ -20,6 +20,7 @@ import { BannedHistory, BannedHistoryAction } from 'src/shared/entities/bannedHi
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 import { UserService } from '../user/user.service';
+import { BulkApproveDto } from './dto/bulk-approve.dto';
 import { UserRole } from '../user/user.entity';
 
 @Injectable()
@@ -1035,7 +1036,7 @@ export class BannedService {
     return queryBuilder.getMany();
   }
 
-  async findPendingApprovalsByHeadManager(userId: string, sortBy?: string): Promise<Banned[]> {
+  async findPendingApprovalsByHeadManager(userId: string, sortBy?: string, createdBy?: string): Promise<Banned[]> {
     // Obtener usuario completo con place
     const user = await this.userService.findById(userId);
     if (!user) {
@@ -1063,6 +1064,10 @@ export class BannedService {
       .andWhere('bannedPlaces.status = :pendingStatus', {
         pendingStatus: BannedPlaceStatus.PENDING,
       });
+
+    if (createdBy) {
+      queryBuilder.andWhere('banned.createdByUserId = :createdBy', { createdBy });
+    }
 
     // Aplicar ordenamiento consistente con /banneds (duplicado aquí)
     {
@@ -1107,6 +1112,73 @@ export class BannedService {
     }
 
     return queryBuilder.getMany();
+  }
+
+  async bulkApprove(body: BulkApproveDto, userId: string) {
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.role !== UserRole.HEAD_MANAGER) {
+      throw new ForbiddenException('Only head-managers can bulk approve');
+    }
+    if (!user.placeId) {
+      throw new ForbiddenException('Head-manager must have a place assigned');
+    }
+
+    const createdBy = body?.createdBy;
+    const maxBatchSize = Math.min(Math.max(body?.maxBatchSize || 1000, 1), 5000);
+
+    // Seleccionar bans con pendientes en el place del head-manager (opcionalmente filtrar por creador)
+    const queryBuilder = this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+      .leftJoin('banned.person', 'person')
+      .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
+      .andWhere('bannedPlaces.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING });
+
+    if (createdBy) {
+      queryBuilder.andWhere('banned.createdByUserId = :createdBy', { createdBy });
+    }
+    if (body?.gender) {
+      queryBuilder.andWhere('person.gender = :gender', { gender: body.gender });
+    }
+    if (Array.isArray(body?.bannedIds) && body.bannedIds.length > 0) {
+      queryBuilder.andWhere('banned.id IN (:...bannedIds)', { bannedIds: body.bannedIds });
+    }
+
+    const bans = await queryBuilder.getMany();
+    if (!bans.length) {
+      return { approvedCount: 0, failedCount: 0, failures: [] as Array<{ id: string; reason: string }> };
+    }
+
+    let approvedCount = 0;
+    const failures: Array<{ id: string; reason: string }> = [];
+
+    // Procesar en chunks simples
+    const items: Array<{ bannedId: string; placeId: string }> = [];
+    for (const b of bans) {
+      for (const bp of (b as any).bannedPlaces || []) {
+        if (bp.placeId === user.placeId && bp.status === BannedPlaceStatus.PENDING) {
+          items.push({ bannedId: (b as any).id, placeId: bp.placeId });
+        }
+      }
+    }
+
+    const chunkSize = Math.min(maxBatchSize, 1000);
+    for (let i = 0; i < items.length; i += chunkSize) {
+      const chunk = items.slice(i, i + chunkSize);
+      for (const it of chunk) {
+        try {
+          await this.approvePlace(it.bannedId, it.placeId, true, userId);
+          approvedCount += 1;
+        } catch (e: any) {
+          failures.push({ id: it.bannedId, reason: e?.message || 'Unknown error' });
+        }
+      }
+    }
+
+    return { approvedCount, failedCount: failures.length, failures };
   }
 
   async getHistory(bannedId: string, userId: string): Promise<BannedHistory[]> {
