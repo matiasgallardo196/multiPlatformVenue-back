@@ -3,7 +3,9 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   In,
@@ -21,9 +23,14 @@ import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 import { UserService } from '../user/user.service';
 import { UserRole } from '../user/user.entity';
+import { lastValueFrom } from 'rxjs';
+import { BAN_NOTICE_WEBHOOK_URL } from '../../config/env.loader';
 
 @Injectable()
 export class BannedService {
+  private readonly logger = new Logger(BannedService.name);
+  private readonly webhookUrl = BAN_NOTICE_WEBHOOK_URL;
+
   constructor(
     @InjectRepository(Banned)
     private readonly bannedRepository: Repository<Banned>,
@@ -36,6 +43,7 @@ export class BannedService {
     @InjectRepository(BannedHistory)
     private readonly bannedHistoryRepository: Repository<BannedHistory>,
     private readonly userService: UserService,
+    private readonly httpService: HttpService,
   ) {}
 
   // isActive se expone desde la entidad con @Expose, no se persiste
@@ -64,6 +72,148 @@ export class BannedService {
       years -= 1;
     }
     return { years: String(years), months: String(months), days: String(days) };
+  }
+
+  private toIso(value?: Date | null): string | null {
+    return value ? new Date(value).toISOString() : null;
+  }
+
+  private async buildBanWebhookPayload(
+    bannedId: string,
+  ): Promise<
+    | {
+        ban: any;
+        person: any;
+        createdBy: any;
+        places: any[];
+      }
+    | null
+  > {
+    const banned = await this.bannedRepository.findOne({
+      where: { id: bannedId },
+      relations: [
+        'person',
+        'createdBy',
+        'createdBy.place',
+        'bannedPlaces',
+        'bannedPlaces.place',
+      ],
+    });
+    if (!banned) {
+      this.logger.warn(`No se encontró el ban ${bannedId} para el webhook`);
+      return null;
+    }
+
+    const violationDates =
+      banned.violationDates?.map((date) => this.toIso(date)) ?? [];
+
+    return {
+      ban: {
+        id: banned.id,
+        incidentNumber: banned.incidentNumber,
+        startingDate: this.toIso(banned.startingDate),
+        endingDate: this.toIso(banned.endingDate),
+        howlong: banned.howlong,
+        motive: banned.motive,
+        peopleInvolved: banned.peopleInvolved,
+        incidentReport: banned.incidentReport,
+        actionTaken: banned.actionTaken,
+        policeNotified: banned.policeNotified,
+        policeNotifiedDate: this.toIso(banned.policeNotifiedDate),
+        policeNotifiedTime: banned.policeNotifiedTime,
+        policeNotifiedEvent: banned.policeNotifiedEvent,
+        createdByUserId: banned.createdByUserId,
+        lastModifiedByUserId: banned.lastModifiedByUserId,
+        requiresApproval: banned.requiresApproval,
+        isActive: banned.isActive,
+        violationsCount: banned.violationsCount,
+        violationDates,
+      },
+      person: banned.person
+        ? {
+            id: banned.person.id,
+            name: banned.person.name,
+            lastName: banned.person.lastName,
+            nickname: banned.person.nickname,
+            gender: banned.person.gender,
+            createdAt: this.toIso(banned.person.createdAt),
+            updatedAt: this.toIso(banned.person.updatedAt),
+          }
+        : null,
+      createdBy: banned.createdBy
+        ? {
+            id: banned.createdBy.id,
+            userName: banned.createdBy.userName,
+            email: banned.createdBy.email,
+            role: banned.createdBy.role,
+            placeId: banned.createdBy.placeId,
+            place: banned.createdBy.place
+              ? {
+                  id: banned.createdBy.place.id,
+                  name: banned.createdBy.place.name,
+                  city: banned.createdBy.place.city,
+                }
+              : null,
+          }
+        : null,
+      places:
+        banned.bannedPlaces?.map((bp) => ({
+          bannedId: bp.bannedId,
+          placeId: bp.placeId,
+          status: bp.status,
+          approvedByUserId: bp.approvedByUserId,
+          approvedAt: this.toIso(bp.approvedAt),
+          rejectedByUserId: bp.rejectedByUserId,
+          rejectedAt: this.toIso(bp.rejectedAt),
+          place: bp.place
+            ? {
+                id: bp.place.id,
+                name: bp.place.name,
+                city: bp.place.city,
+              }
+            : null,
+        })) ?? [],
+    };
+  }
+
+  private async emitBanWebhook(
+    bannedId: string,
+    action: 'ban.created' | 'ban.approved',
+    context: Record<string, unknown> = {},
+  ): Promise<void> {
+    if (!this.webhookUrl) {
+      this.logger.warn(
+        `Se omitió el webhook (${action}) para ban ${bannedId}: BAN_NOTICE_WEBHOOK_URL no está configurada`,
+      );
+      return;
+    }
+
+    try {
+      const payload = await this.buildBanWebhookPayload(bannedId);
+      if (!payload) {
+        return;
+      }
+
+      const body = {
+        action,
+        occurredAt: new Date().toISOString(),
+        ...context,
+        ...payload,
+      };
+
+      await lastValueFrom(
+        this.httpService.post(this.webhookUrl, body, {
+          headers: { 'content-type': 'application/json' },
+          timeout: 5000,
+        }),
+      );
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ?? error?.message ?? String(error);
+      this.logger.error(
+        `Error enviando webhook (${action}) para ban ${bannedId}: ${message}`,
+      );
+    }
   }
 
   /**
@@ -319,6 +469,23 @@ export class BannedService {
         },
       }),
     );
+
+    await this.emitBanWebhook(saved.id, 'ban.created', {
+      triggeredByUserId: userId,
+      placeIds: availablePlaceIds,
+    });
+
+    if (user.role === UserRole.HEAD_MANAGER) {
+      const autoApprovedPlaceIds = links
+        .filter((link) => link.status === BannedPlaceStatus.APPROVED)
+        .map((link) => link.placeId);
+      if (autoApprovedPlaceIds.length > 0) {
+        await this.emitBanWebhook(saved.id, 'ban.approved', {
+          triggeredByUserId: userId,
+          placeIds: autoApprovedPlaceIds,
+        });
+      }
+    }
     
     return saved;
   }
@@ -937,6 +1104,11 @@ export class BannedService {
           placeId: placeId,
         }),
       );
+
+      await this.emitBanWebhook(banned.id, 'ban.approved', {
+        triggeredByUserId: userId,
+        placeIds: [placeId],
+      });
     } else {
       // Rechazar: eliminar el place del ban
       await this.bannedPlaceRepository.delete({ bannedId, placeId });
