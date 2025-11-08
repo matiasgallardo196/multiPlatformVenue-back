@@ -18,6 +18,7 @@ import { ApproveBannedPlaceDto } from './dto/approve-banned-place.dto';
 import { CheckActiveBansDto } from './dto/check-active-bans.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
+import { BulkApproveDto } from './dto/bulk-approve.dto';
 
 @Controller('banneds')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -53,22 +54,26 @@ export class BannedController {
 
   @Roles('manager')
   @Get('pending')
-  findPending(@Req() req: any) {
+  findPending(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findPendingByManager(userId);
+    return this.bannedService.findPendingByManager(userId, sortBy);
   }
 
   @Roles('head-manager')
   @Get('approval-queue')
-  findApprovalQueue(@Req() req: any) {
+  findApprovalQueue(
+    @Req() req: any,
+    @Query('sortBy') sortBy?: string,
+    @Query('createdBy') createdBy?: string,
+  ) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findPendingApprovalsByHeadManager(userId);
+    return this.bannedService.findPendingApprovalsByHeadManager(userId, sortBy, createdBy);
   }
 
   @Get('person/:personId')
@@ -98,6 +103,16 @@ export class BannedController {
       throw new Error('User ID not found in request');
     }
     return this.bannedService.approvePlace(id, body.placeId, body.approved, userId);
+  }
+
+  @Roles('head-manager')
+  @Post('approve/bulk')
+  bulkApprove(@Body() body: BulkApproveDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.bulkApprove(body, userId);
   }
 
   @Get(':id/history')
