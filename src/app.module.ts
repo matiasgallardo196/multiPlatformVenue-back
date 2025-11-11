@@ -10,6 +10,7 @@ import { PlaceModule } from './module/place/place.module';
 import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
 import { AuthModule } from './module/auth/auth.module';
 import { UserModule } from './module/user/user.module';
+import { DashboardModule } from './module/dashboard/dashboard.module';
 import { JwtAuthGuard } from './module/auth/jwt-auth.guard';
 import { RolesGuard } from './module/auth/roles.guard';
 
@@ -23,6 +24,7 @@ import { RolesGuard } from './module/auth/roles.guard';
     CloudinaryModule,
     AuthModule,
     UserModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

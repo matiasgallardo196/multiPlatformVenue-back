@@ -10,6 +10,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
+import { Header } from '@nestjs/common';
 import { IncidentService } from './incident.service';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { UpdateIncidentDto } from './dto/update-incident.dto';
@@ -32,12 +33,17 @@ export class IncidentController {
   }
 
   @Get()
+  @Header('Cache-Control', 'private, max-age=30')
   findAll(@Req() req: any) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.incidentService.findAll(userId);
+    // Paginar desde query (NextJS proxy conserva query strings)
+    const url = new URL(req.url, 'http://localhost');
+    const page = Math.max(1, Number(url.searchParams.get('page') || '1'));
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || '20')));
+    return this.incidentService.findAll(userId, { page, limit });
   }
 
   @Get(':id')

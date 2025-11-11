@@ -80,23 +80,29 @@ export class PersonService {
     return this.personRepository.save(person);
   }
 
-  async findAll(filters?: {
+  async findAll(
+    filters?: {
     gender?: 'Male' | 'Female' | null;
     search?: string;
     sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
-  }): Promise<Person[]> {
-    const queryBuilder = this.personRepository.createQueryBuilder('person')
-      .leftJoinAndSelect('person.incidents', 'incidents');
+    },
+    options?: { page?: number; limit?: number; fields?: string[] },
+  ): Promise<{ items: Person[]; total: number; page: number; limit: number; hasNext: boolean }> {
+    const qb = this.personRepository.createQueryBuilder('person');
+    // Relaciones sólo si no se piden campos específicos (para respuesta ligera)
+    if (!options?.fields || options.fields.length === 0) {
+      qb.leftJoinAndSelect('person.incidents', 'incidents');
+    }
 
     // Filtro por género
     if (filters?.gender !== undefined && filters.gender !== null) {
-      queryBuilder.andWhere('person.gender = :gender', { gender: filters.gender });
+      qb.andWhere('person.gender = :gender', { gender: filters.gender });
     }
 
     // Filtro por búsqueda (nombre, apellido, nickname)
     if (filters?.search && filters.search.trim()) {
       const searchTerm = `%${filters.search.trim().toLowerCase()}%`;
-      queryBuilder.andWhere(
+      qb.andWhere(
         '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
         { search: searchTerm }
       );
@@ -106,23 +112,39 @@ export class PersonService {
     const sortBy = filters?.sortBy || 'newest-first';
     switch (sortBy) {
       case 'oldest-first':
-        queryBuilder.orderBy('person.createdAt', 'ASC');
+        qb.orderBy('person.createdAt', 'ASC');
         break;
       case 'name-asc':
         // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
-        queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
+        qb.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
         break;
       case 'name-desc':
         // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
-        queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
+        qb.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
         break;
       case 'newest-first':
       default:
-        queryBuilder.orderBy('person.createdAt', 'DESC');
+        qb.orderBy('person.createdAt', 'DESC');
         break;
     }
 
-    return queryBuilder.getMany();
+    if (options?.fields && options.fields.length > 0) {
+      // Mapear a columnas válidas del entity Person
+      const allowed = new Set([
+        'id', 'name', 'lastName', 'nickname', 'gender', 'createdAt', 'updatedAt',
+        'documentNumber', 'city', 'imagenProfileUrl',
+      ]);
+      const selected = options.fields.filter((f) => allowed.has(f)).map((f) => `person.${f}`);
+      if (selected.length > 0) {
+        qb.select(selected);
+      }
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    const [items, total] = await qb.clone().skip((page - 1) * limit).take(limit).getManyAndCount();
+    const hasNext = page * limit < total;
+    return { items, total, page, limit, hasNext };
   }
 
   async findOne(id: string): Promise<Person> {

@@ -76,7 +76,7 @@ export class IncidentService {
     return this.incidentRepository.save(incident);
   }
 
-  async findAll(userId: string): Promise<Incident[]> {
+  async findAll(userId: string, options?: { page?: number; limit?: number }): Promise<Incident[]> {
     // Obtener usuario completo con place
     const user = await this.userService.findById(userId);
     if (!user) {
@@ -94,17 +94,29 @@ export class IncidentService {
         return [];
       }
 
-      // Filtrar incidents donde place.city = user.place.city
-      return this.incidentRepository.find({
-        where: { place: { city: user.place.city } },
-        relations: ['person', 'place'],
-      });
+      // Query builder para paginación/selección
+      const qb = this.incidentRepository.createQueryBuilder('incident')
+        .leftJoinAndSelect('incident.place', 'place')
+        .leftJoinAndSelect('incident.person', 'person')
+        .where('place.city = :city', { city: user.place.city })
+        .orderBy('incident.id', 'DESC');
+      
+      const page = Math.max(1, options?.page || 1);
+      const limit = Math.min(100, Math.max(1, options?.limit || 20));
+      qb.skip((page - 1) * limit).take(limit);
+      return qb.getMany();
     }
 
-    // Para otros roles (admin, editor, viewer), retornar todos
-    return this.incidentRepository.find({
-      relations: ['person', 'place'],
-    });
+    // Para otros roles (admin, editor, viewer), retornar todos con paginación
+    const qb = this.incidentRepository.createQueryBuilder('incident')
+      .leftJoinAndSelect('incident.place', 'place')
+      .leftJoinAndSelect('incident.person', 'person')
+      .orderBy('incident.id', 'DESC');
+    
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    qb.skip((page - 1) * limit).take(limit);
+    return qb.getMany();
   }
 
   async findOne(id: string, userId: string): Promise<Incident> {
