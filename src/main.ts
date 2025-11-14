@@ -5,7 +5,12 @@ import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger:
+      process.env.NODE_ENV === 'production'
+        ? ['warn', 'error']
+        : ['log', 'error', 'warn', 'debug', 'verbose'],
+  });
 
   app.enableCors({
     origin: ['http://localhost:3000', `${CORS_ORIGIN}`],

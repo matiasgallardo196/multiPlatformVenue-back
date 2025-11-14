@@ -9,6 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
+import { Header } from '@nestjs/common';
 import { PersonService } from './person.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
@@ -24,10 +25,14 @@ export class PersonController {
   }
 
   @Get()
+  @Header('Cache-Control', 'private, max-age=30')
   findAll(
     @Query('gender') gender?: string,
     @Query('search') search?: string,
     @Query('sortBy') sortBy?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('fields') fields?: string,
   ) {
     const filters: {
       gender?: 'Male' | 'Female' | null;
@@ -49,7 +54,14 @@ export class PersonController {
       filters.sortBy = sortBy as 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
     }
 
-    return this.personService.findAll(Object.keys(filters).length > 0 ? filters : undefined);
+    const pageNum = Math.max(1, Number(page || '1'));
+    const limitNum = Math.min(100, Math.max(1, Number(limit || '20')));
+    const selectFields = (fields || '').split(',').map((f) => f.trim()).filter(Boolean);
+
+    return this.personService.findAll(
+      Object.keys(filters).length > 0 ? filters : undefined,
+      { page: pageNum, limit: limitNum, fields: selectFields.length ? selectFields : undefined },
+    );
   }
 
   @Get(':id')
