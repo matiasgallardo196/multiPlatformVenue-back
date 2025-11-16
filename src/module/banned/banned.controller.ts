@@ -16,6 +16,7 @@ import { BannedService } from './banned.service';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 import { ApproveBannedPlaceDto } from './dto/approve-banned-place.dto';
+import { BulkApproveBannedDto } from './dto/bulk-approve-banned.dto';
 import { CheckActiveBansDto } from './dto/check-active-bans.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -64,7 +65,7 @@ export class BannedController {
 
   @Roles('head-manager')
   @Get('approval-queue')
-  @Header('Cache-Control', 'private, max-age=30')
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   findApprovalQueue(@Req() req: any, @Query('sortBy') sortBy?: string, @Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
@@ -102,6 +103,16 @@ export class BannedController {
       throw new Error('User ID not found in request');
     }
     return this.bannedService.approvePlace(id, body.placeId, body.approved, userId);
+  }
+
+  @Roles('head-manager')
+  @Post('approve/bulk')
+  bulkApprovePlaces(@Body() body: BulkApproveBannedDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.bulkApprovePlaces(userId, body);
   }
 
   @Get(':id/history')

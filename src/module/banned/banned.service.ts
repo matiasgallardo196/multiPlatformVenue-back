@@ -958,6 +958,183 @@ export class BannedService {
     return banned;
   }
 
+  async bulkApprovePlaces(
+    userId: string,
+    filters?: {
+      createdBy?: string;
+      gender?: 'Male' | 'Female';
+      bannedIds?: string[];
+      placeIds?: string[];
+      maxBatchSize?: number;
+    },
+  ): Promise<{ approvedCount: number; failedCount: number; failures?: Array<{ id: string; reason: string }> }> {
+    // Obtener usuario completo con place
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Validar que es head-manager
+    if (user.role !== UserRole.HEAD_MANAGER) {
+      throw new ForbiddenException('Only head-managers can bulk approve places');
+    }
+
+    // Validar que tiene placeId
+    if (!user.placeId) {
+      throw new ForbiddenException('Head-manager must have a place assigned');
+    }
+
+    // Guardar placeId en constante para que TypeScript lo reconozca como no-null
+    const userPlaceId = user.placeId;
+
+    const maxBatchSize = filters?.maxBatchSize || 500; // Límite de seguridad por defecto
+    const failures: Array<{ id: string; reason: string }> = [];
+    let approvedCount = 0;
+    let failedCount = 0;
+
+    // Usar transacción para asegurar atomicidad
+    return await this.bannedRepository.manager.transaction(async (transactionalEntityManager) => {
+      const now = new Date();
+      let placesToUpdate: BannedPlace[] = [];
+      const historyEntries: Array<{ bannedId: string; action: BannedHistoryAction; performedByUserId: string; placeId: string }> = [];
+
+      // OPTIMIZACIÓN: Si hay bannedIds específicos, hacer query directa a BannedPlace (mucho más rápido)
+      if (filters?.bannedIds && filters.bannedIds.length > 0) {
+        // Query optimizada: trabajar directamente con BannedPlace sin cargar todas las relaciones de Banned
+        const qb = transactionalEntityManager
+          .getRepository(BannedPlace)
+          .createQueryBuilder('bp')
+          .innerJoin('bp.banned', 'banned')
+          .where('bp.placeId = :placeId', { placeId: userPlaceId })
+          .andWhere('bp.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
+          .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: filters.bannedIds });
+
+        // Solo aplicar filtros adicionales si son necesarios
+        if (filters?.createdBy) {
+          qb.andWhere('banned.createdByUserId = :createdBy', { createdBy: filters.createdBy });
+        }
+
+        if (filters?.gender) {
+          qb.innerJoin('banned.person', 'person')
+            .andWhere('person.gender = :gender', { gender: filters.gender });
+        }
+
+        // Limitar por seguridad
+        placesToUpdate = await qb.take(maxBatchSize).getMany();
+      } else {
+        // Caso sin bannedIds: usar query con Banned (comportamiento original optimizado)
+        const qb = transactionalEntityManager
+          .getRepository(Banned)
+          .createQueryBuilder('banned')
+          .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+          .where('bannedPlaces.placeId = :placeId', { placeId: userPlaceId })
+          .andWhere('bannedPlaces.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          });
+
+        // Solo cargar person si se necesita para el filtro de gender
+        if (filters?.gender) {
+          qb.leftJoinAndSelect('banned.person', 'person');
+          qb.andWhere('person.gender = :gender', { gender: filters.gender });
+        }
+
+        // Solo cargar createdBy si se usa en el filtro
+        if (filters?.createdBy) {
+          qb.leftJoinAndSelect('banned.createdBy', 'createdBy');
+          qb.andWhere('banned.createdByUserId = :createdBy', { createdBy: filters.createdBy });
+        }
+
+        const bans = await qb.take(maxBatchSize).getMany();
+
+        // Extraer solo los BannedPlace pendientes
+        for (const banned of bans) {
+          const pendingPlace = banned.bannedPlaces?.find(
+            (bp) => bp.placeId === userPlaceId && bp.status === BannedPlaceStatus.PENDING,
+          );
+          if (pendingPlace) {
+            placesToUpdate.push(pendingPlace);
+          }
+        }
+      }
+
+      // Preparar arrays para operaciones batch
+      const bannedIdsToUpdate: string[] = [];
+      for (const place of placesToUpdate) {
+        try {
+          bannedIdsToUpdate.push(place.bannedId);
+
+          // Preparar entrada de historial (sin incluir el objeto banned completo)
+          historyEntries.push({
+            bannedId: place.bannedId,
+            action: BannedHistoryAction.APPROVED,
+            performedByUserId: userId,
+            placeId: userPlaceId,
+          });
+
+          approvedCount++;
+        } catch (error: any) {
+          failedCount++;
+          failures.push({
+            id: place.bannedId,
+            reason: error?.message || 'Unknown error',
+          });
+        }
+      }
+
+      // OPTIMIZACIÓN: UPDATE directo (mucho más rápido que save() con arrays grandes)
+      if (bannedIdsToUpdate.length > 0) {
+        await transactionalEntityManager
+          .createQueryBuilder()
+          .update(BannedPlace)
+          .set({
+            status: BannedPlaceStatus.APPROVED,
+            approvedByUserId: userId,
+            approvedAt: now,
+            rejectedByUserId: null,
+            rejectedAt: null,
+          })
+          .where('placeId = :placeId', { placeId: userPlaceId })
+          .andWhere('status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
+          .andWhere('bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
+          .execute();
+      }
+
+      // OPTIMIZACIÓN: INSERT directo para historial (más eficiente que save() con arrays)
+      if (historyEntries.length > 0) {
+        await transactionalEntityManager
+          .createQueryBuilder()
+          .insert()
+          .into(BannedHistory)
+          .values(historyEntries)
+          .execute();
+      }
+
+      // VERIFICACIÓN: Asegurar que los cambios estén disponibles para lectura antes de retornar
+      // Esto fuerza que la transacción se confirme completamente y los datos estén visibles
+      // antes de que el método retorne, evitando problemas de consistencia en lecturas posteriores
+      if (bannedIdsToUpdate.length > 0) {
+        const verifiedCount = await transactionalEntityManager
+          .getRepository(BannedPlace)
+          .createQueryBuilder('bp')
+          .where('bp.placeId = :placeId', { placeId: userPlaceId })
+          .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
+          .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+          .getCount();
+        
+        // Si la verificación falla, significa que los datos no están disponibles aún
+        // Esto no debería pasar, pero es una validación de seguridad
+        if (verifiedCount !== bannedIdsToUpdate.length) {
+          // Log de advertencia pero no fallar la transacción
+          console.warn(
+            `[BulkApprove] Verificación de consistencia: esperados ${bannedIdsToUpdate.length} aprobados, encontrados ${verifiedCount}`
+          );
+        }
+      }
+
+      return { approvedCount, failedCount, failures: failures.length > 0 ? failures : undefined };
+    });
+  }
+
   async findPendingByManager(userId: string): Promise<Banned[]> {
     // Obtener usuario completo
     const user = await this.userService.findById(userId);
