@@ -13,6 +13,9 @@ export class Place {
   @Column({ type: 'varchar', length: 255, nullable: false })
   city: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  placeEmail: string;
+
   @OneToMany(() => Incident, (incident) => incident.place)
   incidents: Incident[];
 

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreatePlaceDto {
   @IsString()
@@ -8,4 +8,8 @@ export class CreatePlaceDto {
   @IsString()
   @IsNotEmpty()
   city: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  placeEmail: string;
 }
