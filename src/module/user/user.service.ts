@@ -37,7 +37,7 @@ export class UserService {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
     const user = this.repo.create({
@@ -58,7 +58,7 @@ export class UserService {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
     // Buscar si ya existe un usuario con este supabaseUserId
@@ -123,7 +123,7 @@ export class UserService {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
     // Validar que el rol sea manager o staff
@@ -218,7 +218,7 @@ export class UserService {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
     // Validar que el rol sea manager o staff

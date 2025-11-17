@@ -404,7 +404,7 @@ export class BannedService {
         });
     }
 
-    // Para otros roles (admin, editor, viewer), retornar todos los bans aprobados
+    // Para otros roles (admin, editor, staff), retornar todos los bans aprobados
     // Un ban es visible si todos sus places están aprobados
     const queryBuilder = this.bannedRepository
       .createQueryBuilder('banned')

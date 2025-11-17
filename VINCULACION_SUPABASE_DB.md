@@ -53,7 +53,7 @@ passwordHash VARCHAR NULLABLE
 ### Nuevos Roles
 
 ```typescript
-type UserRole = 'admin' | 'editor' | 'viewer' | 'manager' | 'staff';
+type UserRole = 'admin' | 'editor' | 'manager' | 'staff' | 'head-manager';
 ```
 
 ## 🚀 Cómo Aplicar la Migración

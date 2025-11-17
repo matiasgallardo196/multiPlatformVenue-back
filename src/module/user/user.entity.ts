@@ -4,7 +4,6 @@ import { Place } from '../../shared/entities/place.entity';
 export enum UserRole {
   ADMIN = 'admin',
   EDITOR = 'editor',
-  VIEWER = 'viewer',
   MANAGER = 'manager',
   STAFF = 'staff',
   HEAD_MANAGER = 'head-manager',
@@ -30,7 +29,7 @@ export class User {
   @Column({
     type: 'enum',
     enum: UserRole,
-    default: UserRole.VIEWER,
+    default: UserRole.STAFF,
   })
   role: UserRole;
 
