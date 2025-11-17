@@ -1,5 +1,4 @@
 import { Column, Entity, PrimaryGeneratedColumn, OneToMany, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { Incident } from './incident.entity';
 import { Banned } from './banned.entity';
 
 @Entity({ name: 'Persons' })
@@ -29,9 +28,6 @@ export class Person {
     nullable: true,
   })
   gender: 'Male' | 'Female' | null;
-
-  @OneToMany(() => Incident, (incident) => incident.person)
-  incidents: Incident[];
 
   @OneToMany(() => Banned, (banned) => banned.person)
   banneds: Banned[];

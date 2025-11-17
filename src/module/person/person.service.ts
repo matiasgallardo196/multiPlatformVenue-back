@@ -89,10 +89,6 @@ export class PersonService {
     options?: { page?: number; limit?: number; fields?: string[] },
   ): Promise<{ items: Person[]; total: number; page: number; limit: number; hasNext: boolean }> {
     const qb = this.personRepository.createQueryBuilder('person');
-    // Relaciones sólo si no se piden campos específicos (para respuesta ligera)
-    if (!options?.fields || options.fields.length === 0) {
-      qb.leftJoinAndSelect('person.incidents', 'incidents');
-    }
 
     // Filtro por género
     if (filters?.gender !== undefined && filters.gender !== null) {
@@ -150,7 +146,6 @@ export class PersonService {
   async findOne(id: string): Promise<Person> {
     const person = await this.personRepository.findOne({
       where: { id },
-      relations: ['incidents'],
     });
     if (!person) throw new NotFoundException('Person not found');
     return person;
@@ -164,19 +159,10 @@ export class PersonService {
   }
 
   async remove(id: string): Promise<void> {
-    // Load with relations to provide descriptive error if there are incidents
     const person = await this.personRepository.findOne({
       where: { id },
-      relations: ['incidents'],
     });
     if (!person) throw new NotFoundException('Person not found');
-
-    const hasIncidents = (person.incidents?.length || 0) > 0;
-    if (hasIncidents) {
-      throw new ConflictException(
-        'Cannot delete this person because they have related incidents.',
-      );
-    }
 
     const result = await this.personRepository.delete(id);
     if (result.affected === 0) throw new NotFoundException('Person not found');
