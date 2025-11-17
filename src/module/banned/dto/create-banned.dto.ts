@@ -40,8 +40,8 @@ export class CreateBannedDto {
   peopleInvolved?: string;
 
   @IsString()
-  @IsOptional()
-  incidentReport?: string;
+  @IsNotEmpty()
+  incidentReport: string;
 
   @IsString()
   @IsOptional()
