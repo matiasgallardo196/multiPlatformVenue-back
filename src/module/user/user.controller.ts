@@ -15,15 +15,16 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FRONTEND_URL } from '../../config/env.loader';
+import { UserRole } from './user.entity';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UserController {
   constructor(private readonly users: UserService) {}
 
-  // Listar todos los usuarios (solo head-manager)
+  // Listar todos los usuarios (head-manager y admin)
   @Get()
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   async findAll(@Req() req: any) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
@@ -32,9 +33,9 @@ export class UserController {
     return this.users.findAll(userId);
   }
 
-  // Invitar usuario por email (solo head-manager)
+  // Invitar usuario por email (head-manager y admin)
   @Post('invite')
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   async inviteUser(@Body() dto: InviteUserDto, @Req() req: any) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
@@ -47,12 +48,13 @@ export class UserController {
       dto.role,
       redirectUrl,
       userId,
+      dto.placeId,
     );
   }
 
-  // Crear usuario con contraseña (solo head-manager)
+  // Crear usuario con contraseña (head-manager y admin)
   @Post()
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   async createUser(@Body() dto: CreateUserDto, @Req() req: any) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
@@ -64,12 +66,13 @@ export class UserController {
       dto.password,
       dto.role,
       userId,
+      dto.placeId,
     );
   }
 
-  // Eliminar usuario (solo head-manager)
+  // Eliminar usuario (head-manager y admin)
   @Delete(':id')
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   async deleteUser(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
