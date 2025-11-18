@@ -3,7 +3,6 @@ import { Place } from '../../shared/entities/place.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
-  EDITOR = 'editor',
   MANAGER = 'manager',
   STAFF = 'staff',
   HEAD_MANAGER = 'head-manager',
