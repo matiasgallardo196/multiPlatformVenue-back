@@ -8,6 +8,7 @@ import {
   Post,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { PlaceService } from './place.service';
@@ -30,8 +31,10 @@ export class PlaceController {
 
   @Roles(UserRole.MANAGER)
   @Get()
-  findAll() {
-    return this.placeService.findAll();
+  findAll(@Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
+    const pageNum = Math.max(1, Number(page || '1'));
+    const limitNum = Math.min(100, Math.max(1, Number(limit || '20')));
+    return this.placeService.findAll({ page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
   @Roles(UserRole.MANAGER)
