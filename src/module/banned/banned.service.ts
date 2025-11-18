@@ -1373,13 +1373,56 @@ export class BannedService {
     });
   }
 
-  async findByPerson(personId: string): Promise<Banned[]> {
-    const list = await this.bannedRepository.find({
-      where: { person: { id: personId } },
-      relations: ['person', 'bannedPlaces'],
-      order: { startingDate: 'DESC' },
-    });
-    return list;
+  async findByPerson(personId: string, userId: string): Promise<Banned[]> {
+    // Obtener usuario completo con place
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // ADMIN puede ver todos los bans de la persona
+    if (isAdmin(user.role)) {
+      const list = await this.bannedRepository.find({
+        where: { person: { id: personId } },
+        relations: ['person', 'bannedPlaces', 'bannedPlaces.place'],
+        order: { startingDate: 'DESC' },
+      });
+      return list;
+    }
+
+    // Otros roles: filtrar por city y mostrar bans que tienen al menos un place en su city
+    if (!user.place?.city) {
+      return [];
+    }
+
+    // Cargar todos los bans de la persona con todos sus bannedPlaces
+    const list = await this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoinAndSelect('banned.person', 'person')
+      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+      .leftJoinAndSelect('bannedPlaces.place', 'place')
+      .where('person.id = :personId', { personId })
+      .orderBy('banned.startingDate', 'DESC')
+      .getMany();
+
+    // Filtrar bans que tienen al menos un place en la city del usuario
+    // Y filtrar los bannedPlaces para mostrar solo los de su city
+    return list
+      .filter((ban) => {
+        // Verificar si el ban tiene al menos un place en la city del usuario
+        return ban.bannedPlaces?.some(
+          (bp) => bp.place?.city === user.place?.city,
+        );
+      })
+      .map((ban) => {
+        // Filtrar bannedPlaces para mostrar solo los de la city del usuario
+        return {
+          ...ban,
+          bannedPlaces: ban.bannedPlaces?.filter(
+            (bp) => bp.place?.city === user.place?.city,
+          ) || [],
+        };
+      });
   }
 
   /**

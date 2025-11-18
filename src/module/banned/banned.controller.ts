@@ -46,7 +46,7 @@ export class BannedController {
     );
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF)
   @Get()
   findAll(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
@@ -79,10 +79,14 @@ export class BannedController {
     return this.bannedService.findPendingApprovalsByHeadManager(userId, sortBy, { page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF)
   @Get('person/:personId')
-  findByPerson(@Param('personId') personId: string) {
-    return this.bannedService.findByPerson(personId);
+  findByPerson(@Param('personId') personId: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.findByPerson(personId, userId);
   }
 
   @Roles(UserRole.MANAGER)
@@ -121,7 +125,7 @@ export class BannedController {
     return this.bannedService.bulkApprovePlaces(userId, body);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF)
   @Get(':id/history')
   getHistory(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -131,7 +135,7 @@ export class BannedController {
     return this.bannedService.getHistory(id, userId);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF)
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
