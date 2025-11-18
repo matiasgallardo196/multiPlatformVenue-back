@@ -28,13 +28,13 @@ export class PlaceController {
     return this.placeService.create(body);
   }
 
-  @Roles(UserRole.HEAD_MANAGER)
+  @Roles(UserRole.MANAGER)
   @Get()
   findAll() {
     return this.placeService.findAll();
   }
 
-  @Roles(UserRole.HEAD_MANAGER)
+  @Roles(UserRole.MANAGER)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.placeService.findOne(id);
