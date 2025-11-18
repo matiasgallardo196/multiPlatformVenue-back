@@ -2,18 +2,22 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Place } from 'src/shared/entities/place.entity';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
+import { UserService } from '../user/user.service';
+import { UserRole } from '../user/user.entity';
 
 @Injectable()
 export class PlaceService {
   constructor(
     @InjectRepository(Place)
     private readonly placeRepository: Repository<Place>,
+    private readonly userService: UserService,
   ) {}
 
   async create(data: CreatePlaceDto): Promise<Place> {
@@ -36,9 +40,31 @@ export class PlaceService {
     return place;
   }
 
-  async update(id: string, data: UpdatePlaceDto): Promise<Place> {
+  async update(id: string, data: UpdatePlaceDto, userId: string): Promise<Place> {
     const place = await this.findOne(id);
-    Object.assign(place, data);
+    
+    // Obtener usuario para validar permisos
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // HEAD_MANAGER solo puede modificar placeEmail
+    if (user.role === UserRole.HEAD_MANAGER) {
+      if (data.name !== undefined || data.city !== undefined) {
+        throw new ForbiddenException('Head manager can only modify place email');
+      }
+      // Solo permitir modificar placeEmail
+      if (data.placeEmail !== undefined) {
+        place.placeEmail = data.placeEmail;
+      }
+    } else if (user.role === UserRole.ADMIN) {
+      // ADMIN puede modificar todos los campos
+      Object.assign(place, data);
+    } else {
+      throw new ForbiddenException('Only admin or head-manager can update places');
+    }
+
     return this.placeRepository.save(place);
   }
 

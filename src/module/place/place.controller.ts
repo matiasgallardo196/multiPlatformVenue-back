@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { PlaceService } from './place.service';
@@ -21,31 +22,35 @@ import { RolesGuard } from '../auth/roles.guard';
 export class PlaceController {
   constructor(private readonly placeService: PlaceService) {}
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.ADMIN)
   @Post()
   create(@Body() body: CreatePlaceDto) {
     return this.placeService.create(body);
   }
 
-  @Roles(UserRole.STAFF)
+  @Roles(UserRole.HEAD_MANAGER)
   @Get()
   findAll() {
     return this.placeService.findAll();
   }
 
-  @Roles(UserRole.STAFF)
+  @Roles(UserRole.HEAD_MANAGER)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.placeService.findOne(id);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.HEAD_MANAGER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() body: UpdatePlaceDto) {
-    return this.placeService.update(id, body);
+  update(@Param('id') id: string, @Body() body: UpdatePlaceDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.placeService.update(id, body, userId);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.placeService.remove(id);
