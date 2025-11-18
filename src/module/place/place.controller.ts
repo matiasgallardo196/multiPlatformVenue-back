@@ -32,6 +32,10 @@ export class PlaceController {
   @Roles(UserRole.MANAGER)
   @Get()
   findAll(@Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
+    // Si no se pasan parámetros de paginación, retornar array para compatibilidad
+    if (!page && !limit && !search) {
+      return this.placeService.findAllSimple();
+    }
     const pageNum = Math.max(1, Number(page || '1'));
     const limitNum = Math.min(100, Math.max(1, Number(limit || '20')));
     return this.placeService.findAll({ page: pageNum, limit: limitNum, search: search?.trim() || undefined });

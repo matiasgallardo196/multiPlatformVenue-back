@@ -25,6 +25,13 @@ export class PlaceService {
     return this.placeRepository.save(place);
   }
 
+  async findAllSimple(): Promise<Place[]> {
+    return this.placeRepository.find({
+      relations: ['bannedPlaces'],
+      order: { name: 'ASC' },
+    });
+  }
+
   async findAll(
     options?: { page?: number; limit?: number; search?: string },
   ): Promise<{ items: Place[]; total: number; page: number; limit: number; hasNext: boolean }> {
