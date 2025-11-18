@@ -155,7 +155,7 @@ export class BannedController {
     return this.bannedService.update(id, body, userId);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.HEAD_MANAGER)
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;

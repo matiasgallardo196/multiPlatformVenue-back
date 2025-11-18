@@ -1416,12 +1416,11 @@ export class BannedService {
       })
       .map((ban) => {
         // Filtrar bannedPlaces para mostrar solo los de la city del usuario
-        return {
-          ...ban,
-          bannedPlaces: ban.bannedPlaces?.filter(
-            (bp) => bp.place?.city === user.place?.city,
-          ) || [],
-        };
+        // Modificar el objeto existente para preservar el getter isActive
+        ban.bannedPlaces = ban.bannedPlaces?.filter(
+          (bp) => bp.place?.city === user.place?.city,
+        ) || [];
+        return ban;
       });
   }
 
