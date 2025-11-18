@@ -7,23 +7,29 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { Header } from '@nestjs/common';
 import { PersonService } from './person.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
+import { UserRole } from '../user/user.entity';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
 
 @Controller('persons')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PersonController {
   constructor(private readonly personService: PersonService) {}
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Post()
   create(@Body() body: CreatePersonDto) {
     return this.personService.create(body);
   }
 
+  @Roles(UserRole.STAFF)
   @Get()
   @Header('Cache-Control', 'private, max-age=30')
   findAll(
@@ -64,18 +70,19 @@ export class PersonController {
     );
   }
 
+  @Roles(UserRole.STAFF)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.personService.findOne(id);
   }
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Patch(':id')
   update(@Param('id') id: string, @Body() body: UpdatePersonDto) {
     return this.personService.update(id, body);
   }
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.personService.remove(id);

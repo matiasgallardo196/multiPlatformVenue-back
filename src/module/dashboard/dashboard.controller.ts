@@ -7,6 +7,8 @@ import { Banned } from 'src/shared/entities/banned.entity';
 import { BannedPlaceStatus } from 'src/shared/entities/bannedPlace.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '../user/user.entity';
 
 @Controller('dashboard')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,6 +19,7 @@ export class DashboardController {
     @InjectRepository(Banned) private readonly bannedRepo: Repository<Banned>,
   ) {}
 
+  @Roles(UserRole.STAFF)
   @Get('summary')
   async getSummary() {
     const [totalPersons, totalPlaces, activeBans] = await Promise.all([

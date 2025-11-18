@@ -21,6 +21,7 @@ import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 import { UserService } from '../user/user.service';
 import { UserRole } from '../user/user.entity';
+import { hasRoleOrAbove, isAdmin } from '../auth/role-utils';
 
 @Injectable()
 export class BannedService {
@@ -151,9 +152,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to create bans');
@@ -178,7 +180,37 @@ export class BannedService {
     // Regla: si ya existe un baneo ACTIVO en el local del usuario (A),
     // bloquear la creación de un nuevo baneo (aunque se quiera incluir B).
     // Debe editarse el baneo existente para agregar B.
-    if (user.placeId) {
+    if (isAdmin(user.role)) {
+      // ADMIN: verificar si hay bans activos en cualquiera de los places que intenta crear
+      const now = new Date();
+      const existingActiveBannedPlaces = await this.bannedPlaceRepository
+        .createQueryBuilder('bp')
+        .leftJoinAndSelect('bp.banned', 'b')
+        .leftJoinAndSelect('bp.place', 'place')
+        .where('b.personId = :personId', { personId: data.personId })
+        .andWhere('bp.placeId IN (:...placeIds)', { placeIds: data.placeIds })
+        .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+        .andWhere('b.startingDate <= :now', { now })
+        .andWhere('(b.endingDate IS NULL OR b.endingDate >= :now)', { now })
+        .getMany();
+
+      if (existingActiveBannedPlaces.length > 0) {
+        // Obtener los nombres únicos de los places con bans activos
+        const placesWithBansSet = new Set<string>();
+        existingActiveBannedPlaces.forEach(bp => {
+          if (bp.place?.name) {
+            placesWithBansSet.add(bp.place.name);
+          } else if (bp.placeId) {
+            placesWithBansSet.add(bp.placeId);
+          }
+        });
+        const placesWithBans = Array.from(placesWithBansSet);
+        throw new ConflictException(
+          `Person already has an active ban in places: ${placesWithBans.join(', ')}. Please edit the existing ban to add other places.`,
+        );
+      }
+    } else if (user.placeId) {
+      // Otros roles: verificar solo su placeId (lógica actual)
       const now = new Date();
       const existingActiveFromUserPlace = await this.bannedRepository
         .createQueryBuilder('b')
@@ -281,9 +313,13 @@ export class BannedService {
       let approvedByUserId: string | null = null;
       let approvedAt: Date | null = null;
 
-      // Si el creador es head-manager, solo su propio place queda aprobado automáticamente
-      // Los managers dejan todos los places (incluido su propio) como pending
-      if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+      // ADMIN: auto-aprobar todos los places
+      if (isAdmin(user.role)) {
+        status = BannedPlaceStatus.APPROVED;
+        approvedByUserId = userId;
+        approvedAt = now;
+      } else if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+        // HEAD_MANAGER: solo su propio place queda aprobado automáticamente
         status = BannedPlaceStatus.APPROVED;
         approvedByUserId = userId;
         approvedAt = now;
@@ -364,12 +400,30 @@ export class BannedService {
       }
     };
 
-    // Si es head-manager, manager o staff, filtrar por city y solo bans aprobados
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // ADMIN: ve todos los bans aprobados
+    // Otros roles: filtrar por city y solo bans aprobados
+    if (isAdmin(user.role)) {
+      // ADMIN puede ver todos los bans aprobados
+      const queryBuilder = this.bannedRepository
+        .createQueryBuilder('banned')
+        .leftJoinAndSelect('banned.person', 'person')
+        .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+        .leftJoinAndSelect('bannedPlaces.place', 'place');
+      
+      applySorting(queryBuilder, sortBy);
+      
+      return queryBuilder.getMany()
+        .then((bans) => {
+          // Filtrar para asegurar que todos los places del ban están aprobados
+          return bans.filter((ban) => {
+            if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
+            return ban.bannedPlaces.every(
+              (bp) => bp.status === BannedPlaceStatus.APPROVED,
+            );
+          });
+        });
+    } else {
+      // Otros roles (HEAD_MANAGER, MANAGER, STAFF): filtrar por city
       if (!user.place?.city) {
         // Si no tiene city, retornar lista vacía
         return [];
@@ -404,26 +458,8 @@ export class BannedService {
         });
     }
 
-    // Para otros roles (admin, staff), retornar todos los bans aprobados
-    // Un ban es visible si todos sus places están aprobados
-    const queryBuilder = this.bannedRepository
-      .createQueryBuilder('banned')
-      .leftJoinAndSelect('banned.person', 'person')
-      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-      .leftJoinAndSelect('bannedPlaces.place', 'place');
-    
-    applySorting(queryBuilder, sortBy);
-    
-    return queryBuilder.getMany()
-      .then((bans) => {
-        // Filtrar para asegurar que todos los places del ban están aprobados
-        return bans.filter((ban) => {
-          if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
-          return ban.bannedPlaces.every(
-            (bp) => bp.status === BannedPlaceStatus.APPROVED,
-          );
-        });
-      });
+    // No debería llegar aquí, pero por seguridad retornar lista vacía
+    return [];
   }
 
   async addViolation(bannedId: string, userId: string): Promise<Banned> {
@@ -433,8 +469,8 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Solo managers y head-managers pueden agregar violaciones
-    if (user.role !== UserRole.MANAGER && user.role !== UserRole.HEAD_MANAGER) {
+    // Solo managers y roles superiores pueden agregar violaciones
+    if (!hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       throw new ForbiddenException('Only managers and head-managers can add violations');
     }
 
@@ -444,8 +480,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Si es manager/head-manager, validar que tenga acceso por su place/city
-    if (user.place?.city) {
+    // Si es manager/head-manager (no ADMIN), validar que tenga acceso por su place/city
+    if (!isAdmin(user.role) && user.place?.city) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.place?.city === user.place?.city,
       );
@@ -478,12 +514,9 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Si es head-manager, manager o staff, validar que el ban pertenece a su city
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // ADMIN puede acceder a todos los bans
+    // Otros roles: validar que el ban pertenece a su city
+    if (!isAdmin(user.role)) {
       if (!user.place?.city) {
         throw new ForbiddenException('User must have a place assigned');
       }
@@ -507,9 +540,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to update bans');
@@ -522,8 +556,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Validar que el ban pertenece a un place del usuario
-    if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
+    // Validar que el ban pertenece a un place del usuario (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role) && hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.placeId === user.placeId,
       );
@@ -622,7 +656,17 @@ export class BannedService {
         endingDate: updateData.endingDate || banned.endingDate?.toISOString(),
       };
 
-      if (user.role === UserRole.MANAGER) {
+      if (isAdmin(user.role)) {
+        // ADMIN: aprobar automáticamente todos los places
+        await this.bannedPlaceRepository.update(
+          { bannedId: id },
+          { 
+            status: BannedPlaceStatus.APPROVED, 
+            approvedByUserId: userId, 
+            approvedAt: new Date() 
+          }
+        );
+      } else if (user.role === UserRole.MANAGER) {
         // Manager: requiere aprobación, todos los places vuelven a pending
         approvalFields.requiresApproval = true;
         // Actualizar todos los places existentes a pending
@@ -761,14 +805,18 @@ export class BannedService {
           let approvedByUserId: string | null = null;
           let approvedAt: Date | null = null;
 
-          // Si el editor es head-manager y es su propio place, aprobar automáticamente
-          // Los managers dejan todos los places (incluido su propio) como pending
-          if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+          // ADMIN: aprobar automáticamente todos los places
+          // Head-manager: aprobar automáticamente solo su propio place
+          // Managers: todos los places quedan pending (incluido su propio place)
+          if (isAdmin(user.role)) {
+            status = BannedPlaceStatus.APPROVED;
+            approvedByUserId = userId;
+            approvedAt = now;
+          } else if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
             status = BannedPlaceStatus.APPROVED;
             approvedByUserId = userId;
             approvedAt = now;
           }
-          // Para managers: todos los places quedan pending (incluido su propio place)
 
           return this.bannedPlaceRepository.create({
             bannedId: saved.id,
@@ -844,9 +892,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to delete bans');
@@ -859,8 +908,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Validar que el ban pertenece a un place del usuario
-    if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
+    // Validar que el ban pertenece a un place del usuario (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role) && hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.placeId === user.placeId,
       );
@@ -887,18 +936,18 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que es head-manager
-    if (user.role !== UserRole.HEAD_MANAGER) {
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
       throw new ForbiddenException('Only head-managers can approve/reject places');
     }
 
-    // Validar que tiene placeId
-    if (!user.placeId) {
+    // Validar que tiene placeId (ADMIN puede no tener placeId)
+    if (!isAdmin(user.role) && !user.placeId) {
       throw new ForbiddenException('Head-manager must have a place assigned');
     }
 
-    // Validar que el placeId corresponde al place del head-manager
-    if (placeId !== user.placeId) {
+    // Validar que el placeId corresponde al place del head-manager (ADMIN puede aprobar cualquier place)
+    if (!isAdmin(user.role) && placeId !== user.placeId) {
       throw new ForbiddenException('You can only approve/reject places from your place');
     }
 
@@ -974,18 +1023,34 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que es head-manager
-    if (user.role !== UserRole.HEAD_MANAGER) {
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
       throw new ForbiddenException('Only head-managers can bulk approve places');
     }
 
-    // Validar que tiene placeId
-    if (!user.placeId) {
+    // Validar que tiene placeId (ADMIN puede no tener placeId, pero debe especificar placeIds en filtro)
+    if (!isAdmin(user.role) && !user.placeId) {
       throw new ForbiddenException('Head-manager must have a place assigned');
     }
 
-    // Guardar placeId en constante para que TypeScript lo reconozca como no-null
-    const userPlaceId = user.placeId;
+    // ADMIN sin placeId debe especificar placeIds en el filtro
+    if (isAdmin(user.role) && !user.placeId && (!filters?.placeIds || filters.placeIds.length === 0)) {
+      throw new ForbiddenException('Admin must specify placeIds in the filter when creating bulk approvals');
+    }
+
+    // Determinar qué placeIds usar:
+    // - Si ADMIN especifica placeIds en filtro, usar esos
+    // - Si ADMIN tiene placeId, usar su placeId
+    // - Para otros roles, usar su placeId
+    const targetPlaceIds: string[] = isAdmin(user.role) && filters?.placeIds && filters.placeIds.length > 0
+      ? filters.placeIds
+      : user.placeId
+        ? [user.placeId]
+        : [];
+
+    if (targetPlaceIds.length === 0) {
+      throw new ForbiddenException('No placeIds specified for bulk approval');
+    }
 
     const maxBatchSize = filters?.maxBatchSize || 500; // Límite de seguridad por defecto
     const failures: Array<{ id: string; reason: string }> = [];
@@ -1005,7 +1070,7 @@ export class BannedService {
           .getRepository(BannedPlace)
           .createQueryBuilder('bp')
           .innerJoin('bp.banned', 'banned')
-          .where('bp.placeId = :placeId', { placeId: userPlaceId })
+          .where('bp.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
           .andWhere('bp.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
           .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: filters.bannedIds });
 
@@ -1027,7 +1092,7 @@ export class BannedService {
           .getRepository(Banned)
           .createQueryBuilder('banned')
           .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-          .where('bannedPlaces.placeId = :placeId', { placeId: userPlaceId })
+          .where('bannedPlaces.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
           .andWhere('bannedPlaces.status = :pendingStatus', {
             pendingStatus: BannedPlaceStatus.PENDING,
           });
@@ -1046,13 +1111,13 @@ export class BannedService {
 
         const bans = await qb.take(maxBatchSize).getMany();
 
-        // Extraer solo los BannedPlace pendientes
+        // Extraer solo los BannedPlace pendientes de los targetPlaceIds
         for (const banned of bans) {
-          const pendingPlace = banned.bannedPlaces?.find(
-            (bp) => bp.placeId === userPlaceId && bp.status === BannedPlaceStatus.PENDING,
+          const pendingPlaces = banned.bannedPlaces?.filter(
+            (bp) => targetPlaceIds.includes(bp.placeId) && bp.status === BannedPlaceStatus.PENDING,
           );
-          if (pendingPlace) {
-            placesToUpdate.push(pendingPlace);
+          if (pendingPlaces && pendingPlaces.length > 0) {
+            placesToUpdate.push(...pendingPlaces);
           }
         }
       }
@@ -1068,7 +1133,7 @@ export class BannedService {
             bannedId: place.bannedId,
             action: BannedHistoryAction.APPROVED,
             performedByUserId: userId,
-            placeId: userPlaceId,
+            placeId: place.placeId, // Usar el placeId del place que se está aprobando
           });
 
           approvedCount++;
@@ -1093,7 +1158,7 @@ export class BannedService {
             rejectedByUserId: null,
             rejectedAt: null,
           })
-          .where('placeId = :placeId', { placeId: userPlaceId })
+          .where('placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
           .andWhere('status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
           .andWhere('bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
           .execute();
@@ -1116,7 +1181,7 @@ export class BannedService {
         const verifiedCount = await transactionalEntityManager
           .getRepository(BannedPlace)
           .createQueryBuilder('bp')
-          .where('bp.placeId = :placeId', { placeId: userPlaceId })
+          .where('bp.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
           .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
           .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
           .getCount();
@@ -1142,8 +1207,8 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Solo managers pueden ver sus bans pendientes
-    if (user.role !== UserRole.MANAGER) {
+    // Solo managers y roles superiores pueden ver bans pendientes
+    if (!hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       throw new ForbiddenException('Only managers can view pending bans');
     }
 
@@ -1181,13 +1246,13 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que es head-manager
-    if (user.role !== UserRole.HEAD_MANAGER) {
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
       throw new ForbiddenException('Only head-managers can view approval queue');
     }
 
-    // Validar que tiene placeId
-    if (!user.placeId) {
+    // Validar que tiene placeId (ADMIN puede no tener placeId)
+    if (!isAdmin(user.role) && !user.placeId) {
       throw new ForbiddenException('Head-manager must have a place assigned');
     }
 
@@ -1225,17 +1290,23 @@ export class BannedService {
       }
     };
 
-    // Buscar bans que tengan places pendientes del place del head-manager
+    // Buscar bans que tengan places pendientes
+    // ADMIN: ve todas las aprobaciones pendientes
+    // HEAD_MANAGER: ve solo las de su place
     const qb = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
       .leftJoinAndSelect('banned.person', 'person')
       .leftJoinAndSelect('banned.createdBy', 'createdBy')
-      .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
-      .andWhere('bannedPlaces.status = :pendingStatus', {
+      .where('bannedPlaces.status = :pendingStatus', {
         pendingStatus: BannedPlaceStatus.PENDING,
       });
+
+    // Si no es ADMIN, filtrar por placeId
+    if (!isAdmin(user.role) && user.placeId) {
+      qb.andWhere('bannedPlaces.placeId = :placeId', { placeId: user.placeId });
+    }
 
     // Filtro de búsqueda por nombre, apellido, nickname o número de incidente
     if (options?.search && options.search.trim()) {
@@ -1279,12 +1350,8 @@ export class BannedService {
       throw new NotFoundException('Ban not found');
     }
 
-    // Validar acceso según rol
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // Validar acceso según rol (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role)) {
       if (!user.place?.city) {
         throw new ForbiddenException('User must have a place assigned');
       }

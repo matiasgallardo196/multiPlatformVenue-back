@@ -20,13 +20,14 @@ import { BulkApproveBannedDto } from './dto/bulk-approve-banned.dto';
 import { CheckActiveBansDto } from './dto/check-active-bans.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
+import { UserRole } from '../user/user.entity';
 
 @Controller('banneds')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BannedController {
   constructor(private readonly bannedService: BannedService) {}
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Post()
   create(@Body() body: CreateBannedDto, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -36,6 +37,7 @@ export class BannedController {
     return this.bannedService.create(body, userId);
   }
 
+  @Roles(UserRole.MANAGER)
   @Post('check-active')
   checkActiveBans(@Body() body: CheckActiveBansDto) {
     return this.bannedService.checkActiveBansByPersonAndPlaces(
@@ -44,6 +46,7 @@ export class BannedController {
     );
   }
 
+  @Roles(UserRole.MANAGER)
   @Get()
   findAll(@Req() req: any, @Query('sortBy') sortBy?: string) {
     const userId = (req.user as any)?.userId;
@@ -53,7 +56,7 @@ export class BannedController {
     return this.bannedService.findAll(userId, sortBy);
   }
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Get('pending')
   findPending(@Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -63,7 +66,7 @@ export class BannedController {
     return this.bannedService.findPendingByManager(userId);
   }
 
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   @Get('approval-queue')
   @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   findApprovalQueue(@Req() req: any, @Query('sortBy') sortBy?: string, @Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
@@ -76,22 +79,25 @@ export class BannedController {
     return this.bannedService.findPendingApprovalsByHeadManager(userId, sortBy, { page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
+  @Roles(UserRole.MANAGER)
   @Get('person/:personId')
   findByPerson(@Param('personId') personId: string) {
     return this.bannedService.findByPerson(personId);
   }
 
+  @Roles(UserRole.MANAGER)
   @Get('person/:personId/stats')
   getBanHistoryStats(@Param('personId') personId: string) {
     return this.bannedService.getBanHistoryStats(personId);
   }
 
+  @Roles(UserRole.MANAGER)
   @Get('person/:personId/active')
   isPersonBanned(@Param('personId') personId: string) {
     return this.bannedService.isPersonBanned(personId);
   }
 
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   @Post(':id/approve')
   approvePlace(
     @Param('id') id: string,
@@ -105,7 +111,7 @@ export class BannedController {
     return this.bannedService.approvePlace(id, body.placeId, body.approved, userId);
   }
 
-  @Roles('head-manager')
+  @Roles(UserRole.HEAD_MANAGER)
   @Post('approve/bulk')
   bulkApprovePlaces(@Body() body: BulkApproveBannedDto, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -115,6 +121,7 @@ export class BannedController {
     return this.bannedService.bulkApprovePlaces(userId, body);
   }
 
+  @Roles(UserRole.MANAGER)
   @Get(':id/history')
   getHistory(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -124,6 +131,7 @@ export class BannedController {
     return this.bannedService.getHistory(id, userId);
   }
 
+  @Roles(UserRole.MANAGER)
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -133,7 +141,7 @@ export class BannedController {
     return this.bannedService.findOne(id, userId);
   }
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Patch(':id')
   update(@Param('id') id: string, @Body() body: UpdateBannedDto, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -143,7 +151,7 @@ export class BannedController {
     return this.bannedService.update(id, body, userId);
   }
 
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
@@ -153,7 +161,7 @@ export class BannedController {
     return this.bannedService.remove(id, userId);
   }
 
-  @Roles('manager', 'head-manager')
+  @Roles(UserRole.MANAGER, UserRole.HEAD_MANAGER)
   @Post(':id/violations/increment')
   addViolation(@Param('id') id: string, @Req() req: any) {
     const userId = (req.user as any)?.userId;
