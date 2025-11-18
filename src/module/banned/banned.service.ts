@@ -1200,7 +1200,11 @@ export class BannedService {
     });
   }
 
-  async findPendingByManager(userId: string): Promise<Banned[]> {
+  async findPendingByManager(
+    userId: string,
+    sortBy?: string,
+    options?: { page?: number; limit?: number; search?: string },
+  ): Promise<{ items: Banned[]; total: number; page: number; limit: number; hasNext: boolean }> {
     // Obtener usuario completo
     const user = await this.userService.findById(userId);
     if (!user) {
@@ -1212,12 +1216,47 @@ export class BannedService {
       throw new ForbiddenException('Only managers can view pending bans');
     }
 
+    // Función para aplicar sorting
+    const applySorting = (queryBuilder: any, sortBy?: string) => {
+      const sort = sortBy || 'violations-desc';
+      switch (sort) {
+        case 'violations-asc':
+          queryBuilder.orderBy('banned.violationsCount', 'ASC');
+          break;
+        case 'starting-date-desc':
+          queryBuilder.orderBy('banned.startingDate', 'DESC');
+          break;
+        case 'starting-date-asc':
+          queryBuilder.orderBy('banned.startingDate', 'ASC');
+          break;
+        case 'ending-date-desc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'DESC');
+          break;
+        case 'ending-date-asc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'ASC');
+          break;
+        case 'person-name-asc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
+          break;
+        case 'person-name-desc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
+          break;
+        case 'violations-desc':
+        default:
+          queryBuilder.orderBy('banned.violationsCount', 'DESC');
+          break;
+      }
+    };
+
     // Buscar bans creados por el manager que tengan al menos un place pendiente
-    return this.bannedRepository
+    const qb = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
       .leftJoinAndSelect('banned.person', 'person')
+      .leftJoinAndSelect('banned.createdBy', 'createdBy')
       .where('banned.createdByUserId = :userId', { userId })
       .andWhere((qb) => {
         const subQuery = qb
@@ -1230,9 +1269,32 @@ export class BannedService {
           })
           .getQuery();
         return `EXISTS ${subQuery}`;
-      })
-      .orderBy('banned.startingDate', 'DESC')
-      .getMany();
+      });
+
+    // Filtro de búsqueda por nombre, apellido, nickname o número de incidente
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        // Búsqueda por número de incidente
+        qb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        // Búsqueda por nombre, apellido o nickname
+        qb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
+      }
+    }
+
+    applySorting(qb, sortBy);
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    const [items, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    const hasNext = page * limit < total;
+
+    return { items, total, page, limit, hasNext };
   }
 
   async findPendingApprovalsByHeadManager(

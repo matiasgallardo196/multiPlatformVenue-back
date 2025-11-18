@@ -8,6 +8,7 @@ import {
   Post,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { PlaceService } from './place.service';
@@ -28,13 +29,19 @@ export class PlaceController {
     return this.placeService.create(body);
   }
 
-  @Roles(UserRole.HEAD_MANAGER)
+  @Roles(UserRole.MANAGER)
   @Get()
-  findAll() {
-    return this.placeService.findAll();
+  findAll(@Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
+    // Si no se pasan parámetros de paginación, retornar array para compatibilidad
+    if (!page && !limit && !search) {
+      return this.placeService.findAllSimple();
+    }
+    const pageNum = Math.max(1, Number(page || '1'));
+    const limitNum = Math.min(100, Math.max(1, Number(limit || '20')));
+    return this.placeService.findAll({ page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
-  @Roles(UserRole.HEAD_MANAGER)
+  @Roles(UserRole.MANAGER)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.placeService.findOne(id);

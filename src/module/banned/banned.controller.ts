@@ -58,12 +58,14 @@ export class BannedController {
 
   @Roles(UserRole.MANAGER)
   @Get('pending')
-  findPending(@Req() req: any) {
+  findPending(@Req() req: any, @Query('sortBy') sortBy?: string, @Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findPendingByManager(userId);
+    const pageNum = Math.max(1, Number(page || '1'));
+    const limitNum = Math.min(100, Math.max(1, Number(limit || '20')));
+    return this.bannedService.findPendingByManager(userId, sortBy, { page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
   @Roles(UserRole.HEAD_MANAGER)

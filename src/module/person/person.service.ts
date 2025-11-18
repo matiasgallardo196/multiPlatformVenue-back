@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Person } from 'src/shared/entities/person.entity';
+import { Banned } from 'src/shared/entities/banned.entity';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
 
@@ -14,6 +15,8 @@ export class PersonService {
   constructor(
     @InjectRepository(Person)
     private readonly personRepository: Repository<Person>,
+    @InjectRepository(Banned)
+    private readonly bannedRepository: Repository<Banned>,
   ) {}
 
   private toTitleCase(value?: string | null): string | undefined {
@@ -163,6 +166,17 @@ export class PersonService {
       where: { id },
     });
     if (!person) throw new NotFoundException('Person not found');
+
+    // Verificar si tiene CUALQUIER ban (activo, pendiente o expirado)
+    const banCount = await this.bannedRepository.count({
+      where: { person: { id } },
+    });
+
+    if (banCount > 0) {
+      throw new ConflictException(
+        'Cannot delete person with ban history. Please remove all bans first.',
+      );
+    }
 
     const result = await this.personRepository.delete(id);
     if (result.affected === 0) throw new NotFoundException('Person not found');

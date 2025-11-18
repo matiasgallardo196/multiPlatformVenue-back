@@ -25,10 +25,38 @@ export class PlaceService {
     return this.placeRepository.save(place);
   }
 
-  async findAll(): Promise<Place[]> {
+  async findAllSimple(): Promise<Place[]> {
     return this.placeRepository.find({
       relations: ['bannedPlaces'],
+      order: { name: 'ASC' },
     });
+  }
+
+  async findAll(
+    options?: { page?: number; limit?: number; search?: string },
+  ): Promise<{ items: Place[]; total: number; page: number; limit: number; hasNext: boolean }> {
+    const qb = this.placeRepository
+      .createQueryBuilder('place')
+      .leftJoinAndSelect('place.bannedPlaces', 'bannedPlaces');
+
+    // Filtro de búsqueda por nombre o ciudad
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(place.name) LIKE :search OR LOWER(place.city) LIKE :search)',
+        { search: searchTerm }
+      );
+    }
+
+    // Ordenamiento por defecto: nombre ascendente
+    qb.orderBy('place.name', 'ASC');
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    const [items, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    const hasNext = page * limit < total;
+
+    return { items, total, page, limit, hasNext };
   }
 
   async findOne(id: string): Promise<Place> {
