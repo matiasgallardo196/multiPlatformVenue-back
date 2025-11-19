@@ -29,7 +29,7 @@ export class PlaceController {
     return this.placeService.create(body);
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF, UserRole.MANAGER)
   @Get()
   findAll(@Query('page') page?: string, @Query('limit') limit?: string, @Query('search') search?: string) {
     // Si no se pasan parámetros de paginación, retornar array para compatibilidad
@@ -41,7 +41,7 @@ export class PlaceController {
     return this.placeService.findAll({ page: pageNum, limit: limitNum, search: search?.trim() || undefined });
   }
 
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.STAFF, UserRole.MANAGER)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.placeService.findOne(id);

@@ -66,8 +66,14 @@ export class AuthService {
         role,
       );
 
-      // Obtener usuario completo con relación place
-      const userWithPlace = await this.userService.findById(dbUser.id);
+      // Optimización: solo obtener place si el usuario tiene placeId
+      // Evitar findById innecesario cuando el usuario ya existe y no tiene placeId
+      let placeCity: string | null = null;
+      if (dbUser.placeId) {
+        // Solo obtener el city del place, no toda la relación
+        const place = await this.userService.findPlaceById(dbUser.placeId);
+        placeCity = place?.city || null;
+      }
 
       return {
         userId: dbUser.id, // ID de la base de datos
@@ -75,8 +81,8 @@ export class AuthService {
         userName: dbUser.userName,
         email: dbUser.email || '',
         role: dbUser.role,
-        placeId: userWithPlace?.placeId || null,
-        city: userWithPlace?.place?.city || null,
+        placeId: dbUser.placeId || null,
+        city: placeCity,
       };
     } catch (error) {
       // Si ya es una excepción de NestJS, relanzarla
