@@ -99,7 +99,29 @@ export class DashboardController {
       return result;
     }
 
-    // STAFF: Solo datos básicos
+    // STAFF: Datos básicos + información del lugar si tiene placeId asignado
+    if (user.role === UserRole.STAFF) {
+      if (!user.placeId) {
+        // Sin lugar asignado, solo datos básicos
+        return baseStats;
+      }
+
+      const place = await this.placeRepo.findOne({ where: { id: user.placeId } });
+      const [placeStats, contactInfo] = await Promise.all([
+        this.getPlaceStats(user.placeId),
+        this.getContactInfoForPlace(user.placeId),
+      ]);
+
+      return {
+        ...baseStats,
+        placeId: user.placeId,
+        placeName: place?.name || null,
+        placeStats,
+        contactInfo,
+      };
+    }
+
+    // STAFF: Solo datos básicos (fallback)
     return baseStats;
   }
 
@@ -277,6 +299,27 @@ export class DashboardController {
       startingDate: b.startingDate,
       type: 'ban',
     }));
+  }
+
+  private async getContactInfoForPlace(placeId: string): Promise<{
+    manager: { userName: string; email: string | null } | null;
+    headManager: { userName: string; email: string | null } | null;
+  }> {
+    const [manager, headManager] = await Promise.all([
+      this.userRepo.findOne({
+        where: { placeId, role: UserRole.MANAGER },
+        select: ['userName', 'email'],
+      }),
+      this.userRepo.findOne({
+        where: { placeId, role: UserRole.HEAD_MANAGER },
+        select: ['userName', 'email'],
+      }),
+    ]);
+
+    return {
+      manager: manager ? { userName: manager.userName, email: manager.email } : null,
+      headManager: headManager ? { userName: headManager.userName, email: headManager.email } : null,
+    };
   }
 }
 
