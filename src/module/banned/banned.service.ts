@@ -1205,8 +1205,9 @@ export class BannedService {
     sortBy?: string,
     options?: { page?: number; limit?: number; search?: string },
   ): Promise<{ items: Banned[]; total: number; page: number; limit: number; hasNext: boolean }> {
-    // Obtener usuario completo
-    const user = await this.userService.findById(userId);
+    // Optimización: solo obtener el rol del usuario, no toda la relación
+    const user = await this.userService.findByIdForAuth(userId);
+    
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -1289,9 +1290,48 @@ export class BannedService {
 
     applySorting(qb, sortBy);
 
+    // Optimización: separar count de getMany para mejor performance
+    // El count es más rápido sin los joins pesados de Select
+    const countQb = this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoin('banned.person', 'person')
+      .where('banned.createdByUserId = :userId', { userId })
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('1')
+          .from('BannedPlaces', 'bp')
+          .where('bp.bannedId = banned.id')
+          .andWhere('bp.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          })
+          .getQuery();
+        return `EXISTS ${subQuery}`;
+      });
+
+    // Aplicar filtros de búsqueda al count también
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        countQb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        countQb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
+      }
+    }
+
     const page = Math.max(1, options?.page || 1);
     const limit = Math.min(100, Math.max(1, options?.limit || 20));
-    const [items, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    
+    // Ejecutar count y query en paralelo para mejor performance
+    const [total, items] = await Promise.all([
+      countQb.getCount(),
+      qb.skip((page - 1) * limit).take(limit).getMany(),
+    ]);
+    
     const hasNext = page * limit < total;
 
     return { items, total, page, limit, hasNext };
@@ -1302,8 +1342,8 @@ export class BannedService {
     sortBy?: string,
     options?: { page?: number; limit?: number; search?: string },
   ): Promise<{ items: Banned[]; total: number; page: number; limit: number; hasNext: boolean }> {
-    // Obtener usuario completo con place
-    const user = await this.userService.findById(userId);
+    // Optimización: solo obtener rol y placeId del usuario, no toda la relación place
+    const user = await this.userService.findByIdForAuth(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -1388,9 +1428,52 @@ export class BannedService {
 
     applySorting(qb, sortBy);
 
+    // Optimización: separar count de getMany para mejor performance
+    // Usar EXISTS subquery similar a findPendingByManager para mejor performance
+    const countQb = this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoin('banned.person', 'person')
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('1')
+          .from('BannedPlaces', 'bp')
+          .where('bp.bannedId = banned.id')
+          .andWhere('bp.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          });
+        
+        // Si no es ADMIN, agregar filtro de placeId al subquery
+        if (!isAdmin(user.role) && user.placeId) {
+          subQuery.andWhere('bp.placeId = :placeId', { placeId: user.placeId });
+        }
+        
+        return `EXISTS ${subQuery.getQuery()}`;
+      });
+
+    // Aplicar filtros de búsqueda al count también
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        countQb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        countQb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
+      }
+    }
+
     const page = Math.max(1, options?.page || 1);
     const limit = Math.min(100, Math.max(1, options?.limit || 20));
-    const [items, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    
+    // Ejecutar count y query en paralelo para mejor performance
+    const [total, items] = await Promise.all([
+      countQb.getCount(),
+      qb.skip((page - 1) * limit).take(limit).getMany(),
+    ]);
+    
     const hasNext = page * limit < total;
 
     return { items, total, page, limit, hasNext };

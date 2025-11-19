@@ -28,6 +28,14 @@ export class UserService {
     });
   }
 
+  // Optimización: obtener solo campos necesarios para validación de permisos
+  findByIdForAuth(id: string) {
+    return this.repo.findOne({ 
+      where: { id },
+      select: ['id', 'role', 'placeId'], // Solo campos necesarios, sin cargar relación place
+    });
+  }
+
   findBySupabaseId(supabaseUserId: string) {
     return this.repo.findOne({ where: { supabaseUserId } });
   }
@@ -71,35 +79,46 @@ export class UserService {
           UserRole.STAFF
         : role;
 
-    // Buscar si ya existe un usuario con este supabaseUserId
-    let user = await this.findBySupabaseId(supabaseUserId);
+    // Optimización: usar findOne con select específico para evitar cargar toda la entidad
+    let user = await this.repo.findOne({ 
+      where: { supabaseUserId },
+      select: ['id', 'supabaseUserId', 'email', 'userName', 'role', 'placeId'], // Solo campos necesarios
+    });
 
     if (user) {
-      // Actualizar usuario existente (NO actualizar el rol, se gestiona desde PostgreSQL)
-      user.email = email;
-      user.userName = userName;
-      // NO actualizar user.role - el rol se gestiona desde la base de datos
-    } else {
-      // Intentar vincular con un usuario existente por email o userName
-      user = await this.findByEmail(email);
-      if (!user) {
-        user = await this.findByUserName(userName);
-      }
-
-      if (user) {
-        // Vincular usuario existente con Supabase
-        user.supabaseUserId = supabaseUserId;
+      // Solo actualizar si realmente cambió algo
+      const needsUpdate = user.email !== email || user.userName !== userName;
+      if (needsUpdate) {
         user.email = email;
-      } else {
-        // Crear nuevo usuario
-        user = this.repo.create({
-          supabaseUserId,
-          email,
-          userName,
-          role: userRole,
-        });
+        user.userName = userName;
+        return this.repo.save(user);
       }
+      return user; // No necesita actualización, evitar save innecesario
     }
+
+    // Buscar por email o userName en una sola query usando OR
+    user = await this.repo.findOne({
+      where: [
+        { email },
+        { userName },
+      ],
+      select: ['id', 'supabaseUserId', 'email', 'userName', 'role', 'placeId'],
+    });
+
+    if (user) {
+      // Vincular usuario existente con Supabase
+      user.supabaseUserId = supabaseUserId;
+      user.email = email;
+      return this.repo.save(user);
+    }
+
+    // Crear nuevo usuario
+    user = this.repo.create({
+      supabaseUserId,
+      email,
+      userName,
+      role: userRole,
+    });
 
     return this.repo.save(user);
   }
@@ -108,7 +127,8 @@ export class UserService {
   // ADMIN: ve todos los usuarios
   // HEAD_MANAGER: ve solo usuarios de su place
   async findAll(creatorUserId: string) {
-    const creator = await this.findById(creatorUserId);
+    // Optimización: solo obtener rol y placeId, no toda la relación place
+    const creator = await this.findByIdForAuth(creatorUserId);
     if (!creator) {
       throw new NotFoundException('Creator not found');
     }
