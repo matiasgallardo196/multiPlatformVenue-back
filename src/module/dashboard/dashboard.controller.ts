@@ -128,45 +128,51 @@ export class DashboardController {
   // Métodos auxiliares
   private async getActiveBansCount(user: User): Promise<number> {
     const now = new Date();
-    const qb = this.bannedRepo
-      .createQueryBuilder('b')
-      .leftJoinAndSelect('b.bannedPlaces', 'bp')
-      .where('b.requiresApproval = :approved', { approved: false })
-      .andWhere('b.startingDate <= :now', { now })
-      .andWhere('b.endingDate > :now', { now });
-
-    // Si no es ADMIN y tiene lugar, filtrar por lugar
+    
+    // Optimización: usar COUNT en SQL en lugar de cargar todos los registros y filtrar en memoria
     if (!isAdmin(user.role) && user.placeId) {
-      qb.andWhere('bp.placeId = :placeId', { placeId: user.placeId })
-        .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED });
+      // Para managers: contar directamente con las condiciones en SQL
+      return await this.bannedRepo
+        .createQueryBuilder('b')
+        .leftJoin('b.bannedPlaces', 'bp')
+        .where('b.requiresApproval = :approved', { approved: false })
+        .andWhere('b.startingDate <= :now', { now })
+        .andWhere('b.endingDate > :now', { now })
+        .andWhere('bp.placeId = :placeId', { placeId: user.placeId })
+        .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+        .getCount();
     }
 
-    const allBans = await qb.getMany();
+    // Para ADMIN: contar solo los que tienen TODOS sus places aprobados
+    // Estrategia: contar baneos que tienen al menos un place aprobado
+    // y que no tienen ningún place pendiente o rechazado
+    // Usamos LEFT JOIN para encontrar baneos sin places con status diferente a APPROVED
+    const result = await this.bannedRepo
+      .createQueryBuilder('b')
+      .innerJoin('b.bannedPlaces', 'bp_approved', 'bp_approved.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+      .leftJoin('b.bannedPlaces', 'bp_other', 'bp_other.status != :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+      .where('b.requiresApproval = :approved', { approved: false })
+      .andWhere('b.startingDate <= :now', { now })
+      .andWhere('b.endingDate > :now', { now })
+      .andWhere('bp_other.bannedId IS NULL') // No tiene places con status diferente a APPROVED
+      .select('COUNT(DISTINCT b.id)', 'count')
+      .getRawOne();
 
-    // Filtrar solo los que tienen todos sus places aprobados
-    return allBans.filter(ban => {
-      if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
-      if (isAdmin(user.role)) {
-        return ban.bannedPlaces.every(bp => bp.status === BannedPlaceStatus.APPROVED);
-      }
-      // Para managers, solo contar si tiene el lugar aprobado
-      return ban.bannedPlaces.some(bp => bp.placeId === user.placeId && bp.status === BannedPlaceStatus.APPROVED);
-    }).length;
+    return parseInt(result?.count || '0', 10);
   }
 
   private async getActiveBansForPlace(placeId: string): Promise<number> {
+    // Optimización: usar COUNT en SQL en lugar de cargar todos los registros
     const now = new Date();
-    const allBans = await this.bannedRepo
+    return await this.bannedRepo
       .createQueryBuilder('b')
-      .leftJoinAndSelect('b.bannedPlaces', 'bp')
+      .leftJoin('b.bannedPlaces', 'bp')
       .where('b.requiresApproval = :approved', { approved: false })
       .andWhere('b.startingDate <= :now', { now })
       .andWhere('b.endingDate > :now', { now })
       .andWhere('bp.placeId = :placeId', { placeId })
       .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
-      .getMany();
-
-    return allBans.length;
+      .getCount();
   }
 
   private async getPendingBansForPlace(placeId: string): Promise<number> {
@@ -201,15 +207,19 @@ export class DashboardController {
   }
 
   private async getUsersByRole(): Promise<{ admin: number; 'head-manager': number; manager: number; staff: number }> {
-    const users = await this.userRepo.find({
-      select: ['role'],
-    });
+    // Optimización: usar COUNT en SQL en lugar de cargar todos los usuarios
+    const [admin, headManager, manager, staff] = await Promise.all([
+      this.userRepo.count({ where: { role: UserRole.ADMIN } }),
+      this.userRepo.count({ where: { role: UserRole.HEAD_MANAGER } }),
+      this.userRepo.count({ where: { role: UserRole.MANAGER } }),
+      this.userRepo.count({ where: { role: UserRole.STAFF } }),
+    ]);
 
     return {
-      admin: users.filter(u => u.role === UserRole.ADMIN).length,
-      'head-manager': users.filter(u => u.role === UserRole.HEAD_MANAGER).length,
-      manager: users.filter(u => u.role === UserRole.MANAGER).length,
-      staff: users.filter(u => u.role === UserRole.STAFF).length,
+      admin,
+      'head-manager': headManager,
+      manager,
+      staff,
     };
   }
 

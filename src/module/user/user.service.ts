@@ -36,6 +36,13 @@ export class UserService {
     return this.repo.findOne({ where: { email } });
   }
 
+  findPlaceById(placeId: string) {
+    return this.placeRepo.findOne({ 
+      where: { id: placeId },
+      select: ['id', 'city'], // Solo seleccionar campos necesarios
+    });
+  }
+
   async create(userName: string, passwordHash: string, role: UserRole | string) {
     const userRole =
       typeof role === 'string'
