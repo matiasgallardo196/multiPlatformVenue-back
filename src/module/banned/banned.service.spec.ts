@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, ObjectLiteral } from 'typeorm';
 import { BannedService } from './banned.service';
 import { Banned } from 'src/shared/entities/banned.entity';
 import { Person } from 'src/shared/entities/person.entity';
@@ -11,13 +11,13 @@ import { UserService } from '../user/user.service';
 import { ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
 import { UserRole } from '../user/user.entity';
 
-type MockRepo<T> = Partial<Record<keyof Repository<T>, jest.Mock>> & {
+type MockRepo<T extends ObjectLiteral> = Partial<Record<keyof Repository<T>, jest.Mock>> & {
   findOne?: jest.Mock;
   save?: jest.Mock;
   createQueryBuilder?: any;
 };
 
-function createMockRepo<T>(): MockRepo<T> {
+function createMockRepo<T extends ObjectLiteral>(): MockRepo<T> {
   return {
     findOne: jest.fn(),
     save: jest.fn(),

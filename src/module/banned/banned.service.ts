@@ -26,6 +26,7 @@ import { BulkApproveDto } from './dto/bulk-approve.dto';
 import { UserRole } from '../user/user.entity';
 import { lastValueFrom } from 'rxjs';
 import { BAN_NOTICE_WEBHOOK_URL } from '../../config/env.loader';
+import { hasRoleOrAbove, isAdmin } from '../auth/role-utils';
 
 @Injectable()
 export class BannedService {
@@ -302,9 +303,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to create bans');
@@ -329,7 +331,37 @@ export class BannedService {
     // Regla: si ya existe un baneo ACTIVO en el local del usuario (A),
     // bloquear la creación de un nuevo baneo (aunque se quiera incluir B).
     // Debe editarse el baneo existente para agregar B.
-    if (user.placeId) {
+    if (isAdmin(user.role)) {
+      // ADMIN: verificar si hay bans activos en cualquiera de los places que intenta crear
+      const now = new Date();
+      const existingActiveBannedPlaces = await this.bannedPlaceRepository
+        .createQueryBuilder('bp')
+        .leftJoinAndSelect('bp.banned', 'b')
+        .leftJoinAndSelect('bp.place', 'place')
+        .where('b.personId = :personId', { personId: data.personId })
+        .andWhere('bp.placeId IN (:...placeIds)', { placeIds: data.placeIds })
+        .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+        .andWhere('b.startingDate <= :now', { now })
+        .andWhere('(b.endingDate IS NULL OR b.endingDate >= :now)', { now })
+        .getMany();
+
+      if (existingActiveBannedPlaces.length > 0) {
+        // Obtener los nombres únicos de los places con bans activos
+        const placesWithBansSet = new Set<string>();
+        existingActiveBannedPlaces.forEach(bp => {
+          if (bp.place?.name) {
+            placesWithBansSet.add(bp.place.name);
+          } else if (bp.placeId) {
+            placesWithBansSet.add(bp.placeId);
+          }
+        });
+        const placesWithBans = Array.from(placesWithBansSet);
+        throw new ConflictException(
+          `Person already has an active ban in places: ${placesWithBans.join(', ')}. Please edit the existing ban to add other places.`,
+        );
+      }
+    } else if (user.placeId) {
+      // Otros roles: verificar solo su placeId (lógica actual)
       const now = new Date();
       const existingActiveFromUserPlace = await this.bannedRepository
         .createQueryBuilder('b')
@@ -432,9 +464,13 @@ export class BannedService {
       let approvedByUserId: string | null = null;
       let approvedAt: Date | null = null;
 
-      // Si el creador es head-manager, solo su propio place queda aprobado automáticamente
-      // Los managers dejan todos los places (incluido su propio) como pending
-      if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+      // ADMIN: auto-aprobar todos los places
+      if (isAdmin(user.role)) {
+        status = BannedPlaceStatus.APPROVED;
+        approvedByUserId = userId;
+        approvedAt = now;
+      } else if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+        // HEAD_MANAGER: solo su propio place queda aprobado automáticamente
         status = BannedPlaceStatus.APPROVED;
         approvedByUserId = userId;
         approvedAt = now;
@@ -532,12 +568,30 @@ export class BannedService {
       }
     };
 
-    // Si es head-manager, manager o staff, filtrar por city y solo bans aprobados
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // ADMIN: ve todos los bans aprobados
+    // Otros roles: filtrar por city y solo bans aprobados
+    if (isAdmin(user.role)) {
+      // ADMIN puede ver todos los bans aprobados
+      const queryBuilder = this.bannedRepository
+        .createQueryBuilder('banned')
+        .leftJoinAndSelect('banned.person', 'person')
+        .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+        .leftJoinAndSelect('bannedPlaces.place', 'place');
+      
+      applySorting(queryBuilder, sortBy);
+      
+      return queryBuilder.getMany()
+        .then((bans) => {
+          // Filtrar para asegurar que todos los places del ban están aprobados
+          return bans.filter((ban) => {
+            if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
+            return ban.bannedPlaces.every(
+              (bp) => bp.status === BannedPlaceStatus.APPROVED,
+            );
+          });
+        });
+    } else {
+      // Otros roles (HEAD_MANAGER, MANAGER, STAFF): filtrar por city
       if (!user.place?.city) {
         // Si no tiene city, retornar lista vacía
         return [];
@@ -572,26 +626,8 @@ export class BannedService {
         });
     }
 
-    // Para otros roles (admin, editor, viewer), retornar todos los bans aprobados
-    // Un ban es visible si todos sus places están aprobados
-    const queryBuilder = this.bannedRepository
-      .createQueryBuilder('banned')
-      .leftJoinAndSelect('banned.person', 'person')
-      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-      .leftJoinAndSelect('bannedPlaces.place', 'place');
-    
-    applySorting(queryBuilder, sortBy);
-    
-    return queryBuilder.getMany()
-      .then((bans) => {
-        // Filtrar para asegurar que todos los places del ban están aprobados
-        return bans.filter((ban) => {
-          if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
-          return ban.bannedPlaces.every(
-            (bp) => bp.status === BannedPlaceStatus.APPROVED,
-          );
-        });
-      });
+    // No debería llegar aquí, pero por seguridad retornar lista vacía
+    return [];
   }
 
   async addViolation(bannedId: string, userId: string): Promise<Banned> {
@@ -601,8 +637,8 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Solo managers y head-managers pueden agregar violaciones
-    if (user.role !== UserRole.MANAGER && user.role !== UserRole.HEAD_MANAGER) {
+    // Solo managers y roles superiores pueden agregar violaciones
+    if (!hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       throw new ForbiddenException('Only managers and head-managers can add violations');
     }
 
@@ -612,8 +648,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Si es manager/head-manager, validar que tenga acceso por su place/city
-    if (user.place?.city) {
+    // Si es manager/head-manager (no ADMIN), validar que tenga acceso por su place/city
+    if (!isAdmin(user.role) && user.place?.city) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.place?.city === user.place?.city,
       );
@@ -646,12 +682,9 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Si es head-manager, manager o staff, validar que el ban pertenece a su city
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // ADMIN puede acceder a todos los bans
+    // Otros roles: validar que el ban pertenece a su city
+    if (!isAdmin(user.role)) {
       if (!user.place?.city) {
         throw new ForbiddenException('User must have a place assigned');
       }
@@ -675,9 +708,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to update bans');
@@ -690,8 +724,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Validar que el ban pertenece a un place del usuario
-    if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
+    // Validar que el ban pertenece a un place del usuario (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role) && hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.placeId === user.placeId,
       );
@@ -790,7 +824,17 @@ export class BannedService {
         endingDate: updateData.endingDate || banned.endingDate?.toISOString(),
       };
 
-      if (user.role === UserRole.MANAGER) {
+      if (isAdmin(user.role)) {
+        // ADMIN: aprobar automáticamente todos los places
+        await this.bannedPlaceRepository.update(
+          { bannedId: id },
+          { 
+            status: BannedPlaceStatus.APPROVED, 
+            approvedByUserId: userId, 
+            approvedAt: new Date() 
+          }
+        );
+      } else if (user.role === UserRole.MANAGER) {
         // Manager: requiere aprobación, todos los places vuelven a pending
         approvalFields.requiresApproval = true;
         // Actualizar todos los places existentes a pending
@@ -929,14 +973,18 @@ export class BannedService {
           let approvedByUserId: string | null = null;
           let approvedAt: Date | null = null;
 
-          // Si el editor es head-manager y es su propio place, aprobar automáticamente
-          // Los managers dejan todos los places (incluido su propio) como pending
-          if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
+          // ADMIN: aprobar automáticamente todos los places
+          // Head-manager: aprobar automáticamente solo su propio place
+          // Managers: todos los places quedan pending (incluido su propio place)
+          if (isAdmin(user.role)) {
+            status = BannedPlaceStatus.APPROVED;
+            approvedByUserId = userId;
+            approvedAt = now;
+          } else if (user.role === UserRole.HEAD_MANAGER && place.id === user.placeId) {
             status = BannedPlaceStatus.APPROVED;
             approvedByUserId = userId;
             approvedAt = now;
           }
-          // Para managers: todos los places quedan pending (incluido su propio place)
 
           return this.bannedPlaceRepository.create({
             bannedId: saved.id,
@@ -1012,9 +1060,10 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que si es head-manager o manager, tiene placeId
+    // Validar que si es head-manager o manager (no ADMIN), tiene placeId
     if (
-      (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) &&
+      !isAdmin(user.role) &&
+      hasRoleOrAbove(user.role, UserRole.MANAGER) &&
       !user.placeId
     ) {
       throw new ForbiddenException('User must have a place assigned to delete bans');
@@ -1027,8 +1076,8 @@ export class BannedService {
     });
     if (!banned) throw new NotFoundException('Ban not found');
 
-    // Validar que el ban pertenece a un place del usuario
-    if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
+    // Validar que el ban pertenece a un place del usuario (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role) && hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       const hasAccess = banned.bannedPlaces?.some(
         (bp) => bp.placeId === user.placeId,
       );
@@ -1055,18 +1104,18 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Validar que es head-manager
-    if (user.role !== UserRole.HEAD_MANAGER) {
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
       throw new ForbiddenException('Only head-managers can approve/reject places');
     }
 
-    // Validar que tiene placeId
-    if (!user.placeId) {
+    // Validar que tiene placeId (ADMIN puede no tener placeId)
+    if (!isAdmin(user.role) && !user.placeId) {
       throw new ForbiddenException('Head-manager must have a place assigned');
     }
 
-    // Validar que el placeId corresponde al place del head-manager
-    if (placeId !== user.placeId) {
+    // Validar que el placeId corresponde al place del head-manager (ADMIN puede aprobar cualquier place)
+    if (!isAdmin(user.role) && placeId !== user.placeId) {
       throw new ForbiddenException('You can only approve/reject places from your place');
     }
 
@@ -1131,24 +1180,257 @@ export class BannedService {
     return banned;
   }
 
-  async findPendingByManager(userId: string, sortBy?: string): Promise<Banned[]> {
-    // Obtener usuario completo
+  async bulkApprovePlaces(
+    userId: string,
+    filters?: {
+      createdBy?: string;
+      gender?: 'Male' | 'Female';
+      bannedIds?: string[];
+      placeIds?: string[];
+      maxBatchSize?: number;
+    },
+  ): Promise<{ approvedCount: number; failedCount: number; failures?: Array<{ id: string; reason: string }> }> {
+    // Obtener usuario completo con place
     const user = await this.userService.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Solo managers pueden ver sus bans pendientes
-    if (user.role !== UserRole.MANAGER) {
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
+      throw new ForbiddenException('Only head-managers can bulk approve places');
+    }
+
+    // Validar que tiene placeId (ADMIN puede no tener placeId, pero debe especificar placeIds en filtro)
+    if (!isAdmin(user.role) && !user.placeId) {
+      throw new ForbiddenException('Head-manager must have a place assigned');
+    }
+
+    // ADMIN sin placeId debe especificar placeIds en el filtro
+    if (isAdmin(user.role) && !user.placeId && (!filters?.placeIds || filters.placeIds.length === 0)) {
+      throw new ForbiddenException('Admin must specify placeIds in the filter when creating bulk approvals');
+    }
+
+    // Determinar qué placeIds usar:
+    // - Si ADMIN especifica placeIds en filtro, usar esos
+    // - Si ADMIN tiene placeId, usar su placeId
+    // - Para otros roles, usar su placeId
+    const targetPlaceIds: string[] = isAdmin(user.role) && filters?.placeIds && filters.placeIds.length > 0
+      ? filters.placeIds
+      : user.placeId
+        ? [user.placeId]
+        : [];
+
+    if (targetPlaceIds.length === 0) {
+      throw new ForbiddenException('No placeIds specified for bulk approval');
+    }
+
+    const maxBatchSize = filters?.maxBatchSize || 500; // Límite de seguridad por defecto
+    const failures: Array<{ id: string; reason: string }> = [];
+    let approvedCount = 0;
+    let failedCount = 0;
+
+    // Usar transacción para asegurar atomicidad
+    return await this.bannedRepository.manager.transaction(async (transactionalEntityManager) => {
+      const now = new Date();
+      let placesToUpdate: BannedPlace[] = [];
+      const historyEntries: Array<{ bannedId: string; action: BannedHistoryAction; performedByUserId: string; placeId: string }> = [];
+
+      // OPTIMIZACIÓN: Si hay bannedIds específicos, hacer query directa a BannedPlace (mucho más rápido)
+      if (filters?.bannedIds && filters.bannedIds.length > 0) {
+        // Query optimizada: trabajar directamente con BannedPlace sin cargar todas las relaciones de Banned
+        const qb = transactionalEntityManager
+          .getRepository(BannedPlace)
+          .createQueryBuilder('bp')
+          .innerJoin('bp.banned', 'banned')
+          .where('bp.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
+          .andWhere('bp.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
+          .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: filters.bannedIds });
+
+        // Solo aplicar filtros adicionales si son necesarios
+        if (filters?.createdBy) {
+          qb.andWhere('banned.createdByUserId = :createdBy', { createdBy: filters.createdBy });
+        }
+
+        if (filters?.gender) {
+          qb.innerJoin('banned.person', 'person')
+            .andWhere('person.gender = :gender', { gender: filters.gender });
+        }
+
+        // Limitar por seguridad
+        placesToUpdate = await qb.take(maxBatchSize).getMany();
+      } else {
+        // Caso sin bannedIds: usar query con Banned (comportamiento original optimizado)
+        const qb = transactionalEntityManager
+          .getRepository(Banned)
+          .createQueryBuilder('banned')
+          .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+          .where('bannedPlaces.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
+          .andWhere('bannedPlaces.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          });
+
+        // Solo cargar person si se necesita para el filtro de gender
+        if (filters?.gender) {
+          qb.leftJoinAndSelect('banned.person', 'person');
+          qb.andWhere('person.gender = :gender', { gender: filters.gender });
+        }
+
+        // Solo cargar createdBy si se usa en el filtro
+        if (filters?.createdBy) {
+          qb.leftJoinAndSelect('banned.createdBy', 'createdBy');
+          qb.andWhere('banned.createdByUserId = :createdBy', { createdBy: filters.createdBy });
+        }
+
+        const bans = await qb.take(maxBatchSize).getMany();
+
+        // Extraer solo los BannedPlace pendientes de los targetPlaceIds
+        for (const banned of bans) {
+          const pendingPlaces = banned.bannedPlaces?.filter(
+            (bp) => targetPlaceIds.includes(bp.placeId) && bp.status === BannedPlaceStatus.PENDING,
+          );
+          if (pendingPlaces && pendingPlaces.length > 0) {
+            placesToUpdate.push(...pendingPlaces);
+          }
+        }
+      }
+
+      // Preparar arrays para operaciones batch
+      const bannedIdsToUpdate: string[] = [];
+      for (const place of placesToUpdate) {
+        try {
+          bannedIdsToUpdate.push(place.bannedId);
+
+          // Preparar entrada de historial (sin incluir el objeto banned completo)
+          historyEntries.push({
+            bannedId: place.bannedId,
+            action: BannedHistoryAction.APPROVED,
+            performedByUserId: userId,
+            placeId: place.placeId, // Usar el placeId del place que se está aprobando
+          });
+
+          approvedCount++;
+        } catch (error: any) {
+          failedCount++;
+          failures.push({
+            id: place.bannedId,
+            reason: error?.message || 'Unknown error',
+          });
+        }
+      }
+
+      // OPTIMIZACIÓN: UPDATE directo (mucho más rápido que save() con arrays grandes)
+      if (bannedIdsToUpdate.length > 0) {
+        await transactionalEntityManager
+          .createQueryBuilder()
+          .update(BannedPlace)
+          .set({
+            status: BannedPlaceStatus.APPROVED,
+            approvedByUserId: userId,
+            approvedAt: now,
+            rejectedByUserId: null,
+            rejectedAt: null,
+          })
+          .where('placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
+          .andWhere('status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
+          .andWhere('bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
+          .execute();
+      }
+
+      // OPTIMIZACIÓN: INSERT directo para historial (más eficiente que save() con arrays)
+      if (historyEntries.length > 0) {
+        await transactionalEntityManager
+          .createQueryBuilder()
+          .insert()
+          .into(BannedHistory)
+          .values(historyEntries)
+          .execute();
+      }
+
+      // VERIFICACIÓN: Asegurar que los cambios estén disponibles para lectura antes de retornar
+      // Esto fuerza que la transacción se confirme completamente y los datos estén visibles
+      // antes de que el método retorne, evitando problemas de consistencia en lecturas posteriores
+      if (bannedIdsToUpdate.length > 0) {
+        const verifiedCount = await transactionalEntityManager
+          .getRepository(BannedPlace)
+          .createQueryBuilder('bp')
+          .where('bp.placeId IN (:...placeIds)', { placeIds: targetPlaceIds })
+          .andWhere('bp.bannedId IN (:...bannedIds)', { bannedIds: bannedIdsToUpdate })
+          .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+          .getCount();
+        
+        // Si la verificación falla, significa que los datos no están disponibles aún
+        // Esto no debería pasar, pero es una validación de seguridad
+        if (verifiedCount !== bannedIdsToUpdate.length) {
+          // Log de advertencia pero no fallar la transacción
+          console.warn(
+            `[BulkApprove] Verificación de consistencia: esperados ${bannedIdsToUpdate.length} aprobados, encontrados ${verifiedCount}`
+          );
+        }
+      }
+
+      return { approvedCount, failedCount, failures: failures.length > 0 ? failures : undefined };
+    });
+  }
+
+  async findPendingByManager(
+    userId: string,
+    sortBy?: string,
+    options?: { page?: number; limit?: number; search?: string },
+  ): Promise<{ items: Banned[]; total: number; page: number; limit: number; hasNext: boolean }> {
+    // Optimización: solo obtener el rol del usuario, no toda la relación
+    const user = await this.userService.findByIdForAuth(userId);
+    
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Solo managers y roles superiores pueden ver bans pendientes
+    if (!hasRoleOrAbove(user.role, UserRole.MANAGER)) {
       throw new ForbiddenException('Only managers can view pending bans');
     }
 
+    // Función para aplicar sorting
+    const applySorting = (queryBuilder: any, sortBy?: string) => {
+      const sort = sortBy || 'violations-desc';
+      switch (sort) {
+        case 'violations-asc':
+          queryBuilder.orderBy('banned.violationsCount', 'ASC');
+          break;
+        case 'starting-date-desc':
+          queryBuilder.orderBy('banned.startingDate', 'DESC');
+          break;
+        case 'starting-date-asc':
+          queryBuilder.orderBy('banned.startingDate', 'ASC');
+          break;
+        case 'ending-date-desc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'DESC');
+          break;
+        case 'ending-date-asc':
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+            .addOrderBy('banned.endingDate', 'ASC');
+          break;
+        case 'person-name-asc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
+          break;
+        case 'person-name-desc':
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
+          break;
+        case 'violations-desc':
+        default:
+          queryBuilder.orderBy('banned.violationsCount', 'DESC');
+          break;
+      }
+    };
+
     // Buscar bans creados por el manager que tengan al menos un place pendiente
-    const queryBuilder = this.bannedRepository
+    const qb = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
       .leftJoinAndSelect('banned.person', 'person')
+      .leftJoinAndSelect('banned.createdBy', 'createdBy')
       .where('banned.createdByUserId = :userId', { userId })
       .andWhere((qb) => {
         const subQuery = qb
@@ -1163,8 +1445,94 @@ export class BannedService {
         return `EXISTS ${subQuery}`;
       });
 
-    // Aplicar ordenamiento consistente
-    {
+    // Filtro de búsqueda por nombre, apellido, nickname o número de incidente
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        // Búsqueda por número de incidente
+        qb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        // Búsqueda por nombre, apellido o nickname
+        qb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
+      }
+    }
+
+    applySorting(qb, sortBy);
+
+    // Optimización: separar count de getMany para mejor performance
+    // El count es más rápido sin los joins pesados de Select
+    const countQb = this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoin('banned.person', 'person')
+      .where('banned.createdByUserId = :userId', { userId })
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('1')
+          .from('BannedPlaces', 'bp')
+          .where('bp.bannedId = banned.id')
+          .andWhere('bp.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          })
+          .getQuery();
+        return `EXISTS ${subQuery}`;
+      });
+
+    // Aplicar filtros de búsqueda al count también
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        countQb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        countQb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
+      }
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    
+    // Ejecutar count y query en paralelo para mejor performance
+    const [total, items] = await Promise.all([
+      countQb.getCount(),
+      qb.skip((page - 1) * limit).take(limit).getMany(),
+    ]);
+    
+    const hasNext = page * limit < total;
+
+    return { items, total, page, limit, hasNext };
+  }
+
+  async findPendingApprovalsByHeadManager(
+    userId: string,
+    sortBy?: string,
+    options?: { page?: number; limit?: number; search?: string },
+  ): Promise<{ items: Banned[]; total: number; page: number; limit: number; hasNext: boolean }> {
+    // Optimización: solo obtener rol y placeId del usuario, no toda la relación place
+    const user = await this.userService.findByIdForAuth(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Validar que es head-manager o superior
+    if (!hasRoleOrAbove(user.role, UserRole.HEAD_MANAGER)) {
+      throw new ForbiddenException('Only head-managers can view approval queue');
+    }
+
+    // Validar que tiene placeId (ADMIN puede no tener placeId)
+    if (!isAdmin(user.role) && !user.placeId) {
+      throw new ForbiddenException('Head-manager must have a place assigned');
+    }
+
+    // Función para aplicar sorting
+    const applySorting = (queryBuilder: any, sortBy?: string) => {
       const sort = sortBy || 'violations-desc';
       switch (sort) {
         case 'violations-asc':
@@ -1177,180 +1545,111 @@ export class BannedService {
           queryBuilder.orderBy('banned.startingDate', 'ASC');
           break;
         case 'ending-date-desc':
-          queryBuilder
-            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
             .addOrderBy('banned.endingDate', 'DESC');
           break;
         case 'ending-date-asc':
-          queryBuilder
-            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
+          queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
             .addOrderBy('banned.endingDate', 'ASC');
           break;
         case 'person-name-asc':
-          queryBuilder.orderBy(
-            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
-            'ASC',
-          );
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
           break;
         case 'person-name-desc':
-          queryBuilder.orderBy(
-            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
-            'DESC',
-          );
+          queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
           break;
         case 'violations-desc':
         default:
           queryBuilder.orderBy('banned.violationsCount', 'DESC');
           break;
       }
-    }
+    };
 
-    return queryBuilder.getMany();
-  }
-
-  async findPendingApprovalsByHeadManager(userId: string, sortBy?: string, createdBy?: string): Promise<Banned[]> {
-    // Obtener usuario completo con place
-    const user = await this.userService.findById(userId);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // Validar que es head-manager
-    if (user.role !== UserRole.HEAD_MANAGER) {
-      throw new ForbiddenException('Only head-managers can view approval queue');
-    }
-
-    // Validar que tiene placeId
-    if (!user.placeId) {
-      throw new ForbiddenException('Head-manager must have a place assigned');
-    }
-
-    // Buscar bans que tengan places pendientes del place del head-manager
-    const queryBuilder = this.bannedRepository
+    // Buscar bans que tengan places pendientes
+    // ADMIN: ve todas las aprobaciones pendientes
+    // HEAD_MANAGER: ve solo las de su place
+    const qb = this.bannedRepository
       .createQueryBuilder('banned')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
       .leftJoinAndSelect('banned.person', 'person')
       .leftJoinAndSelect('banned.createdBy', 'createdBy')
-      .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
-      .andWhere('bannedPlaces.status = :pendingStatus', {
+      .where('bannedPlaces.status = :pendingStatus', {
         pendingStatus: BannedPlaceStatus.PENDING,
       });
 
-    if (createdBy) {
-      queryBuilder.andWhere('banned.createdByUserId = :createdBy', { createdBy });
+    // Si no es ADMIN, filtrar por placeId
+    if (!isAdmin(user.role) && user.placeId) {
+      qb.andWhere('bannedPlaces.placeId = :placeId', { placeId: user.placeId });
     }
 
-    // Aplicar ordenamiento consistente con /banneds (duplicado aquí)
-    {
-      const sort = sortBy || 'violations-desc';
-      switch (sort) {
-        case 'violations-asc':
-          queryBuilder.orderBy('banned.violationsCount', 'ASC');
-          break;
-        case 'starting-date-desc':
-          queryBuilder.orderBy('banned.startingDate', 'DESC');
-          break;
-        case 'starting-date-asc':
-          queryBuilder.orderBy('banned.startingDate', 'ASC');
-          break;
-        case 'ending-date-desc':
-          queryBuilder
-            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
-            .addOrderBy('banned.endingDate', 'DESC');
-          break;
-        case 'ending-date-asc':
-          queryBuilder
-            .addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
-            .addOrderBy('banned.endingDate', 'ASC');
-          break;
-        case 'person-name-asc':
-          queryBuilder.orderBy(
-            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
-            'ASC',
-          );
-          break;
-        case 'person-name-desc':
-          queryBuilder.orderBy(
-            "COALESCE(person.name, '') || ' ' || COALESCE(person.lastName, '') || ' ' || COALESCE(person.nickname, '')",
-            'DESC',
-          );
-          break;
-        case 'violations-desc':
-        default:
-          queryBuilder.orderBy('banned.violationsCount', 'DESC');
-          break;
+    // Filtro de búsqueda por nombre, apellido, nickname o número de incidente
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        // Búsqueda por número de incidente
+        qb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        // Búsqueda por nombre, apellido o nickname
+        qb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
       }
     }
 
-    return queryBuilder.getMany();
-  }
+    applySorting(qb, sortBy);
 
-  async bulkApprove(body: BulkApproveDto, userId: string) {
-    const user = await this.userService.findById(userId);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    if (user.role !== UserRole.HEAD_MANAGER) {
-      throw new ForbiddenException('Only head-managers can bulk approve');
-    }
-    if (!user.placeId) {
-      throw new ForbiddenException('Head-manager must have a place assigned');
-    }
-
-    const createdBy = body?.createdBy;
-    const maxBatchSize = Math.min(Math.max(body?.maxBatchSize || 1000, 1), 5000);
-
-    // Seleccionar bans con pendientes en el place del head-manager (opcionalmente filtrar por creador)
-    const queryBuilder = this.bannedRepository
+    // Optimización: separar count de getMany para mejor performance
+    // Usar EXISTS subquery similar a findPendingByManager para mejor performance
+    const countQb = this.bannedRepository
       .createQueryBuilder('banned')
-      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoin('banned.person', 'person')
-      .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
-      .andWhere('bannedPlaces.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING });
-
-    if (createdBy) {
-      queryBuilder.andWhere('banned.createdByUserId = :createdBy', { createdBy });
-    }
-    if (body?.gender) {
-      queryBuilder.andWhere('person.gender = :gender', { gender: body.gender });
-    }
-    if (Array.isArray(body?.bannedIds) && body.bannedIds.length > 0) {
-      queryBuilder.andWhere('banned.id IN (:...bannedIds)', { bannedIds: body.bannedIds });
-    }
-
-    const bans = await queryBuilder.getMany();
-    if (!bans.length) {
-      return { approvedCount: 0, failedCount: 0, failures: [] as Array<{ id: string; reason: string }> };
-    }
-
-    let approvedCount = 0;
-    const failures: Array<{ id: string; reason: string }> = [];
-
-    // Procesar en chunks simples
-    const items: Array<{ bannedId: string; placeId: string }> = [];
-    for (const b of bans) {
-      for (const bp of (b as any).bannedPlaces || []) {
-        if (bp.placeId === user.placeId && bp.status === BannedPlaceStatus.PENDING) {
-          items.push({ bannedId: (b as any).id, placeId: bp.placeId });
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('1')
+          .from('BannedPlaces', 'bp')
+          .where('bp.bannedId = banned.id')
+          .andWhere('bp.status = :pendingStatus', {
+            pendingStatus: BannedPlaceStatus.PENDING,
+          });
+        
+        // Si no es ADMIN, agregar filtro de placeId al subquery
+        if (!isAdmin(user.role) && user.placeId) {
+          subQuery.andWhere('bp.placeId = :placeId', { placeId: user.placeId });
         }
+        
+        return `EXISTS ${subQuery.getQuery()}`;
+      });
+
+    // Aplicar filtros de búsqueda al count también
+    if (options?.search && options.search.trim()) {
+      const searchTerm = `%${options.search.trim().toLowerCase()}%`;
+      const numSearch = options.search.trim().replace(/[^0-9]/g, '');
+      if (numSearch.length > 0) {
+        countQb.andWhere('CAST(banned.incidentNumber AS TEXT) LIKE :numSearch', { numSearch: `%${numSearch}%` });
+      } else {
+        countQb.andWhere(
+          '(LOWER(person.name) LIKE :search OR LOWER(person.lastName) LIKE :search OR LOWER(person.nickname) LIKE :search)',
+          { search: searchTerm }
+        );
       }
     }
 
-    const chunkSize = Math.min(maxBatchSize, 1000);
-    for (let i = 0; i < items.length; i += chunkSize) {
-      const chunk = items.slice(i, i + chunkSize);
-      for (const it of chunk) {
-        try {
-          await this.approvePlace(it.bannedId, it.placeId, true, userId);
-          approvedCount += 1;
-        } catch (e: any) {
-          failures.push({ id: it.bannedId, reason: e?.message || 'Unknown error' });
-        }
-      }
-    }
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.min(100, Math.max(1, options?.limit || 20));
+    
+    // Ejecutar count y query en paralelo para mejor performance
+    const [total, items] = await Promise.all([
+      countQb.getCount(),
+      qb.skip((page - 1) * limit).take(limit).getMany(),
+    ]);
+    
+    const hasNext = page * limit < total;
 
-    return { approvedCount, failedCount: failures.length, failures };
+    return { items, total, page, limit, hasNext };
   }
 
   async getHistory(bannedId: string, userId: string): Promise<BannedHistory[]> {
@@ -1369,12 +1668,8 @@ export class BannedService {
       throw new NotFoundException('Ban not found');
     }
 
-    // Validar acceso según rol
-    if (
-      user.role === UserRole.HEAD_MANAGER ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.STAFF
-    ) {
+    // Validar acceso según rol (ADMIN puede acceder a todos)
+    if (!isAdmin(user.role)) {
       if (!user.place?.city) {
         throw new ForbiddenException('User must have a place assigned');
       }
@@ -1396,13 +1691,55 @@ export class BannedService {
     });
   }
 
-  async findByPerson(personId: string): Promise<Banned[]> {
-    const list = await this.bannedRepository.find({
-      where: { person: { id: personId } },
-      relations: ['person', 'bannedPlaces'],
-      order: { startingDate: 'DESC' },
-    });
-    return list;
+  async findByPerson(personId: string, userId: string): Promise<Banned[]> {
+    // Obtener usuario completo con place
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // ADMIN puede ver todos los bans de la persona
+    if (isAdmin(user.role)) {
+      const list = await this.bannedRepository.find({
+        where: { person: { id: personId } },
+        relations: ['person', 'bannedPlaces', 'bannedPlaces.place'],
+        order: { startingDate: 'DESC' },
+      });
+      return list;
+    }
+
+    // Otros roles: filtrar por city y mostrar bans que tienen al menos un place en su city
+    if (!user.place?.city) {
+      return [];
+    }
+
+    // Cargar todos los bans de la persona con todos sus bannedPlaces
+    const list = await this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoinAndSelect('banned.person', 'person')
+      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+      .leftJoinAndSelect('bannedPlaces.place', 'place')
+      .where('person.id = :personId', { personId })
+      .orderBy('banned.startingDate', 'DESC')
+      .getMany();
+
+    // Filtrar bans que tienen al menos un place en la city del usuario
+    // Y filtrar los bannedPlaces para mostrar solo los de su city
+    return list
+      .filter((ban) => {
+        // Verificar si el ban tiene al menos un place en la city del usuario
+        return ban.bannedPlaces?.some(
+          (bp) => bp.place?.city === user.place?.city,
+        );
+      })
+      .map((ban) => {
+        // Filtrar bannedPlaces para mostrar solo los de la city del usuario
+        // Modificar el objeto existente para preservar el getter isActive
+        ban.bannedPlaces = ban.bannedPlaces?.filter(
+          (bp) => bp.place?.city === user.place?.city,
+        ) || [];
+        return ban;
+      });
   }
 
   /**

@@ -6,12 +6,15 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User, UserRole } from './user.entity';
+import { Place } from '../../shared/entities/place.entity';
 import { supabaseAdmin } from '../../config/supabase';
+import { hasRoleOrAbove, isAdmin } from '../auth/role-utils';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly repo: Repository<User>,
+    @InjectRepository(Place) private readonly placeRepo: Repository<Place>,
   ) {}
 
   findByUserName(userName: string) {
@@ -25,6 +28,14 @@ export class UserService {
     });
   }
 
+  // Optimización: obtener solo campos necesarios para validación de permisos
+  findByIdForAuth(id: string) {
+    return this.repo.findOne({ 
+      where: { id },
+      select: ['id', 'role', 'placeId'], // Solo campos necesarios, sin cargar relación place
+    });
+  }
+
   findBySupabaseId(supabaseUserId: string) {
     return this.repo.findOne({ where: { supabaseUserId } });
   }
@@ -33,11 +44,18 @@ export class UserService {
     return this.repo.findOne({ where: { email } });
   }
 
+  findPlaceById(placeId: string) {
+    return this.placeRepo.findOne({ 
+      where: { id: placeId },
+      select: ['id', 'city'], // Solo seleccionar campos necesarios
+    });
+  }
+
   async create(userName: string, passwordHash: string, role: UserRole | string) {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
     const user = this.repo.create({
@@ -58,54 +76,78 @@ export class UserService {
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
-    // Buscar si ya existe un usuario con este supabaseUserId
-    let user = await this.findBySupabaseId(supabaseUserId);
+    // Optimización: usar findOne con select específico para evitar cargar toda la entidad
+    let user = await this.repo.findOne({ 
+      where: { supabaseUserId },
+      select: ['id', 'supabaseUserId', 'email', 'userName', 'role', 'placeId'], // Solo campos necesarios
+    });
 
     if (user) {
-      // Actualizar usuario existente (NO actualizar el rol, se gestiona desde PostgreSQL)
-      user.email = email;
-      user.userName = userName;
-      // NO actualizar user.role - el rol se gestiona desde la base de datos
-    } else {
-      // Intentar vincular con un usuario existente por email o userName
-      user = await this.findByEmail(email);
-      if (!user) {
-        user = await this.findByUserName(userName);
-      }
-
-      if (user) {
-        // Vincular usuario existente con Supabase
-        user.supabaseUserId = supabaseUserId;
+      // Solo actualizar si realmente cambió algo
+      const needsUpdate = user.email !== email || user.userName !== userName;
+      if (needsUpdate) {
         user.email = email;
-      } else {
-        // Crear nuevo usuario
-        user = this.repo.create({
-          supabaseUserId,
-          email,
-          userName,
-          role: userRole,
-        });
+        user.userName = userName;
+        return this.repo.save(user);
       }
+      return user; // No necesita actualización, evitar save innecesario
     }
+
+    // Buscar por email o userName en una sola query usando OR
+    user = await this.repo.findOne({
+      where: [
+        { email },
+        { userName },
+      ],
+      select: ['id', 'supabaseUserId', 'email', 'userName', 'role', 'placeId'],
+    });
+
+    if (user) {
+      // Vincular usuario existente con Supabase
+      user.supabaseUserId = supabaseUserId;
+      user.email = email;
+      return this.repo.save(user);
+    }
+
+    // Crear nuevo usuario
+    user = this.repo.create({
+      supabaseUserId,
+      email,
+      userName,
+      role: userRole,
+    });
 
     return this.repo.save(user);
   }
 
-  // Método para listar todos los usuarios del place del head-manager
-  async findAll(headManagerUserId: string) {
-    const headManager = await this.findById(headManagerUserId);
-    if (!headManager) {
-      throw new NotFoundException('Head manager not found');
+  // Método para listar todos los usuarios
+  // ADMIN: ve todos los usuarios
+  // HEAD_MANAGER: ve solo usuarios de su place
+  async findAll(creatorUserId: string) {
+    // Optimización: solo obtener rol y placeId, no toda la relación place
+    const creator = await this.findByIdForAuth(creatorUserId);
+    if (!creator) {
+      throw new NotFoundException('Creator not found');
     }
-    if (!headManager.placeId) {
+
+    // ADMIN puede ver todos los usuarios
+    if (isAdmin(creator.role)) {
+      return this.repo.find({
+        select: ['id', 'userName', 'email', 'role', 'supabaseUserId', 'placeId'],
+        order: { userName: 'ASC' },
+      });
+    }
+
+    // HEAD_MANAGER solo ve usuarios de su place
+    if (!creator.placeId) {
       throw new ConflictException('Head manager must have a place assigned');
     }
 
     return this.repo.find({
-      where: { placeId: headManager.placeId },
+      where: { placeId: creator.placeId },
       select: ['id', 'userName', 'email', 'role', 'supabaseUserId', 'placeId'],
       order: { userName: 'ASC' },
     });
@@ -117,27 +159,48 @@ export class UserService {
     userName: string,
     role: UserRole | string,
     redirectUrl: string,
-    headManagerUserId: string,
+    creatorUserId: string,
+    placeId?: string,
   ) {
     // Convertir string a enum si es necesario
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
-    // Validar que el rol sea manager o staff
-    if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
-      throw new ConflictException('Only manager or staff roles can be created by head-manager');
+    // Obtener el creador y validar permisos
+    const creator = await this.findById(creatorUserId);
+    if (!creator) {
+      throw new NotFoundException('Creator not found');
     }
 
-    // Obtener el head-manager y validar que tiene placeId
-    const headManager = await this.findById(headManagerUserId);
-    if (!headManager) {
-      throw new NotFoundException('Head manager not found');
-    }
-    if (!headManager.placeId) {
-      throw new ConflictException('Head manager must have a place assigned');
+    // Validar política de creación de roles y determinar placeId
+    let userPlaceId: string | null;
+
+    if (isAdmin(creator.role)) {
+      // ADMIN puede crear cualquier rol, debe especificar placeId en el DTO
+      if (!placeId) {
+        throw new ConflictException('Admin must specify a placeId when creating users');
+      }
+      // Validar que el placeId existe
+      const place = await this.placeRepo.findOne({ where: { id: placeId } });
+      if (!place) {
+        throw new NotFoundException('Place not found');
+      }
+      userPlaceId = placeId;
+    } else if (creator.role === UserRole.HEAD_MANAGER) {
+      // HEAD_MANAGER solo puede crear MANAGER o STAFF
+      if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
+        throw new ConflictException('Head-manager can only create manager or staff roles');
+      }
+      if (!creator.placeId) {
+        throw new ConflictException('Head manager must have a place assigned');
+      }
+      // HEAD_MANAGER usa su propio placeId (ignora el parámetro si se proporciona)
+      userPlaceId = creator.placeId;
+    } else {
+      throw new ConflictException('Only admin or head-manager can create users');
     }
 
     const roleString = userRole as string; // Los valores del enum son strings
@@ -147,7 +210,8 @@ export class UserService {
       userName,
       role: roleString,
       redirectUrl,
-      placeId: headManager.placeId,
+      placeId: userPlaceId,
+      creatorRole: creator.role,
     });
 
     if (!supabaseAdmin) {
@@ -191,13 +255,13 @@ export class UserService {
       email: data.user?.email,
     });
 
-    // Crear usuario en la base de datos con placeId del head-manager
+    // Crear usuario en la base de datos con placeId del creador
     const user = this.repo.create({
       email,
       userName,
       role: userRole,
       supabaseUserId: data.user?.id,
-      placeId: headManager.placeId,
+      placeId: userPlaceId,
     });
 
     const savedUser = await this.repo.save(user);
@@ -212,27 +276,48 @@ export class UserService {
     userName: string,
     password: string,
     role: UserRole | string,
-    headManagerUserId: string,
+    creatorUserId: string,
+    placeId?: string,
   ) {
     // Convertir string a enum si es necesario
     const userRole =
       typeof role === 'string'
         ? (Object.values(UserRole).find((r) => r === role) as UserRole) ||
-          UserRole.VIEWER
+          UserRole.STAFF
         : role;
 
-    // Validar que el rol sea manager o staff
-    if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
-      throw new ConflictException('Only manager or staff roles can be created by head-manager');
+    // Obtener el creador y validar permisos
+    const creator = await this.findById(creatorUserId);
+    if (!creator) {
+      throw new NotFoundException('Creator not found');
     }
 
-    // Obtener el head-manager y validar que tiene placeId
-    const headManager = await this.findById(headManagerUserId);
-    if (!headManager) {
-      throw new NotFoundException('Head manager not found');
-    }
-    if (!headManager.placeId) {
-      throw new ConflictException('Head manager must have a place assigned');
+    // Validar política de creación de roles y determinar placeId
+    let userPlaceId: string | null;
+
+    if (isAdmin(creator.role)) {
+      // ADMIN puede crear cualquier rol, debe especificar placeId en el DTO
+      if (!placeId) {
+        throw new ConflictException('Admin must specify a placeId when creating users');
+      }
+      // Validar que el placeId existe
+      const place = await this.placeRepo.findOne({ where: { id: placeId } });
+      if (!place) {
+        throw new NotFoundException('Place not found');
+      }
+      userPlaceId = placeId;
+    } else if (creator.role === UserRole.HEAD_MANAGER) {
+      // HEAD_MANAGER solo puede crear MANAGER o STAFF
+      if (userRole !== UserRole.MANAGER && userRole !== UserRole.STAFF) {
+        throw new ConflictException('Head-manager can only create manager or staff roles');
+      }
+      if (!creator.placeId) {
+        throw new ConflictException('Head manager must have a place assigned');
+      }
+      // HEAD_MANAGER usa su propio placeId (ignora el parámetro si se proporciona)
+      userPlaceId = creator.placeId;
+    } else {
+      throw new ConflictException('Only admin or head-manager can create users');
     }
 
     const roleString = userRole as string; // Los valores del enum son strings
@@ -263,36 +348,41 @@ export class UserService {
       throw new Error(`Failed to create user: ${error.message}`);
     }
 
-    // Crear usuario en la base de datos con placeId del head-manager
+    // Crear usuario en la base de datos
     const user = this.repo.create({
       email,
       userName,
       role: userRole,
       supabaseUserId: data.user?.id,
-      placeId: headManager.placeId,
+      placeId: userPlaceId,
     });
 
     return this.repo.save(user);
   }
 
-  // Método para eliminar usuario (solo si pertenece al place del head-manager)
-  async deleteUser(id: string, headManagerUserId: string) {
+  // Método para eliminar usuario
+  // ADMIN: puede eliminar cualquier usuario
+  // HEAD_MANAGER: solo puede eliminar usuarios de su place
+  async deleteUser(id: string, creatorUserId: string) {
     const userToDelete = await this.findById(id);
     if (!userToDelete) {
       throw new NotFoundException('User not found');
     }
 
-    const headManager = await this.findById(headManagerUserId);
-    if (!headManager) {
-      throw new NotFoundException('Head manager not found');
-    }
-    if (!headManager.placeId) {
-      throw new ConflictException('Head manager must have a place assigned');
+    const creator = await this.findById(creatorUserId);
+    if (!creator) {
+      throw new NotFoundException('Creator not found');
     }
 
-    // Validar que el usuario pertenece al place del head-manager
-    if (userToDelete.placeId !== headManager.placeId) {
-      throw new ConflictException('User does not belong to head manager place');
+    // ADMIN puede eliminar cualquier usuario
+    if (!isAdmin(creator.role)) {
+      // HEAD_MANAGER solo puede eliminar usuarios de su place
+      if (!creator.placeId) {
+        throw new ConflictException('Head manager must have a place assigned');
+      }
+      if (userToDelete.placeId !== creator.placeId) {
+        throw new ConflictException('User does not belong to head manager place');
+      }
     }
 
     // Eliminar de Supabase si tiene supabaseUserId

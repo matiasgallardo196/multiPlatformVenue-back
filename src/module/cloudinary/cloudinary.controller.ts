@@ -1,5 +1,8 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '../user/user.entity';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
 import * as crypto from 'crypto';
 import {
   CLOUDINARY_API_KEY,
@@ -8,8 +11,9 @@ import {
 } from '../../config/env.loader';
 
 @Controller('cloudinary')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CloudinaryController {
-  @Roles('manager')
+  @Roles(UserRole.MANAGER)
   @Post('signature')
   createSignature(
     @Body()

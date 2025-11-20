@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsString, MinLength, IsUUID, IsOptional } from 'class-validator';
 import { UserRole } from '../user.entity';
 
 export class InviteUserDto {
@@ -11,4 +11,8 @@ export class InviteUserDto {
 
   @IsEnum(UserRole)
   role: UserRole;
+
+  @IsUUID()
+  @IsOptional()
+  placeId?: string;
 }
