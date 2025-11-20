@@ -292,28 +292,30 @@ export class DashboardController {
     // Contar personas únicas que tienen baneos activos o pendientes en este lugar
     const now = new Date();
     
-    // Obtener IDs de personas con baneos activos en este lugar
-    const activeBans = await this.bannedRepo
-      .createQueryBuilder('b')
-      .leftJoin('b.bannedPlaces', 'bp')
-      .leftJoin('b.person', 'p')
-      .where('bp.placeId = :placeId', { placeId })
-      .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
-      .andWhere('b.requiresApproval = :approved', { approved: false })
-      .andWhere('b.startingDate <= :now', { now })
-      .andWhere('(b.endingDate > :now OR b.endingDate IS NULL)', { now })
-      .select('DISTINCT p.id', 'personId')
-      .getRawMany();
-
-    // Obtener IDs de personas con baneos pendientes en este lugar
-    const pendingBans = await this.bannedRepo
-      .createQueryBuilder('b')
-      .leftJoin('b.bannedPlaces', 'bp')
-      .leftJoin('b.person', 'p')
-      .where('bp.placeId = :placeId', { placeId })
-      .andWhere('bp.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
-      .select('DISTINCT p.id', 'personId')
-      .getRawMany();
+    // Optimización: ejecutar ambas queries en paralelo
+    const [activeBans, pendingBans] = await Promise.all([
+      // Obtener IDs de personas con baneos activos en este lugar
+      this.bannedRepo
+        .createQueryBuilder('b')
+        .leftJoin('b.bannedPlaces', 'bp')
+        .leftJoin('b.person', 'p')
+        .where('bp.placeId = :placeId', { placeId })
+        .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+        .andWhere('b.requiresApproval = :approved', { approved: false })
+        .andWhere('b.startingDate <= :now', { now })
+        .andWhere('(b.endingDate > :now OR b.endingDate IS NULL)', { now })
+        .select('DISTINCT p.id', 'personId')
+        .getRawMany(),
+      // Obtener IDs de personas con baneos pendientes en este lugar
+      this.bannedRepo
+        .createQueryBuilder('b')
+        .leftJoin('b.bannedPlaces', 'bp')
+        .leftJoin('b.person', 'p')
+        .where('bp.placeId = :placeId', { placeId })
+        .andWhere('bp.status = :pendingStatus', { pendingStatus: BannedPlaceStatus.PENDING })
+        .select('DISTINCT p.id', 'personId')
+        .getRawMany(),
+    ]);
 
     // Combinar y contar únicos
     const allPersonIds = new Set([
