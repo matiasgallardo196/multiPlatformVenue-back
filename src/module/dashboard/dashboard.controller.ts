@@ -117,26 +117,56 @@ export class DashboardController {
     if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
       if (!user.placeId) {
         // Sin lugar asignado, solo datos básicos
-        return baseStats;
+        // Optimización: ejecutar queries en paralelo
+        const [totalPersons, activeBans] = await Promise.all([
+          this.personRepo.count(),
+          this.getActiveBansCount(user),
+        ]);
+        return {
+          totals: {
+            totalPersons,
+            activeBans,
+          },
+        };
       }
 
-      const place = await this.placeRepo.findOne({ where: { id: user.placeId } });
-      const [placeStats, recentActivity] = await Promise.all([
+      // Optimización: ejecutar TODAS las queries en paralelo
+      const [
+        place,
+        totalPersons,
+        activeBans,
+        placeStats,
+        recentActivity,
+        usersUnderManagement, // Solo se usa si es HEAD_MANAGER
+      ] = await Promise.all([
+        this.placeRepo.findOne({ 
+          where: { id: user.placeId },
+          select: ['id', 'name'], // Solo campos necesarios
+        }),
+        this.personRepo.count(),
+        this.getActiveBansCount(user),
         this.getPlaceStats(user.placeId),
         this.getRecentActivity(user.placeId),
+        // Para HEAD_MANAGER, obtener usuarios; para MANAGER, retornar array vacío
+        user.role === UserRole.HEAD_MANAGER 
+          ? this.getUsersForPlace(user.placeId)
+          : Promise.resolve([]),
       ]);
 
       const result: any = {
-        ...baseStats,
+        totals: {
+          totalPersons,
+          activeBans,
+        },
         placeId: user.placeId,
         placeName: place?.name || null,
         placeStats,
         recentActivity,
       };
 
-      // HEAD_MANAGER: Además incluir usuarios bajo su gestión
+      // HEAD_MANAGER: incluir usuarios bajo su gestión
       if (user.role === UserRole.HEAD_MANAGER) {
-        result.usersUnderManagement = await this.getUsersForPlace(user.placeId);
+        result.usersUnderManagement = usersUnderManagement;
       }
 
       return result;
