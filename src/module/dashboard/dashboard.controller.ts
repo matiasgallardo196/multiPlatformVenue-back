@@ -32,9 +32,52 @@ export class DashboardController {
       throw new NotFoundException('User ID not found in request');
     }
 
-    const user = await this.userService.findById(userId);
+    // Optimización: solo obtener campos necesarios, no toda la relación place
+    const user = await this.userService.findByIdForAuth(userId);
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // STAFF: Datos básicos + información del lugar si tiene placeId asignado
+    if (user.role === UserRole.STAFF) {
+      if (!user.placeId) {
+        // Sin lugar asignado, solo datos básicos
+        // Optimización: ejecutar queries en paralelo
+        const [totalPersons, activeBans] = await Promise.all([
+          this.personRepo.count(),
+          this.getActiveBansCount(user),
+        ]);
+        
+        return {
+          totals: {
+            totalPersons,
+            activeBans,
+          },
+        };
+      }
+
+      // Optimización: ejecutar todas las queries en paralelo
+      const [place, placeStats, contactInfo, totalPersons, activeBans] = await Promise.all([
+        this.placeRepo.findOne({ 
+          where: { id: user.placeId },
+          select: ['id', 'name'], // Solo campos necesarios
+        }),
+        this.getPlaceStats(user.placeId),
+        this.getContactInfoForPlace(user.placeId),
+        this.personRepo.count(), // TODO: filtrar por place si es necesario
+        this.getActiveBansCount(user),
+      ]);
+
+      return {
+        totals: {
+          totalPersons,
+          activeBans,
+        },
+        placeId: user.placeId,
+        placeName: place?.name || null,
+        placeStats,
+        contactInfo,
+      };
     }
 
     // Datos base para todos los roles
@@ -74,51 +117,59 @@ export class DashboardController {
     if (user.role === UserRole.HEAD_MANAGER || user.role === UserRole.MANAGER) {
       if (!user.placeId) {
         // Sin lugar asignado, solo datos básicos
-        return baseStats;
+        // Optimización: ejecutar queries en paralelo
+        const [totalPersons, activeBans] = await Promise.all([
+          this.personRepo.count(),
+          this.getActiveBansCount(user),
+        ]);
+        return {
+          totals: {
+            totalPersons,
+            activeBans,
+          },
+        };
       }
 
-      const place = await this.placeRepo.findOne({ where: { id: user.placeId } });
-      const [placeStats, recentActivity] = await Promise.all([
+      // Optimización: ejecutar TODAS las queries en paralelo
+      const [
+        place,
+        totalPersons,
+        activeBans,
+        placeStats,
+        recentActivity,
+        usersUnderManagement, // Solo se usa si es HEAD_MANAGER
+      ] = await Promise.all([
+        this.placeRepo.findOne({ 
+          where: { id: user.placeId },
+          select: ['id', 'name'], // Solo campos necesarios
+        }),
+        this.personRepo.count(),
+        this.getActiveBansCount(user),
         this.getPlaceStats(user.placeId),
         this.getRecentActivity(user.placeId),
+        // Para HEAD_MANAGER, obtener usuarios; para MANAGER, retornar array vacío
+        user.role === UserRole.HEAD_MANAGER 
+          ? this.getUsersForPlace(user.placeId)
+          : Promise.resolve([]),
       ]);
 
       const result: any = {
-        ...baseStats,
+        totals: {
+          totalPersons,
+          activeBans,
+        },
         placeId: user.placeId,
         placeName: place?.name || null,
         placeStats,
         recentActivity,
       };
 
-      // HEAD_MANAGER: Además incluir usuarios bajo su gestión
+      // HEAD_MANAGER: incluir usuarios bajo su gestión
       if (user.role === UserRole.HEAD_MANAGER) {
-        result.usersUnderManagement = await this.getUsersForPlace(user.placeId);
+        result.usersUnderManagement = usersUnderManagement;
       }
 
       return result;
-    }
-
-    // STAFF: Datos básicos + información del lugar si tiene placeId asignado
-    if (user.role === UserRole.STAFF) {
-      if (!user.placeId) {
-        // Sin lugar asignado, solo datos básicos
-        return baseStats;
-      }
-
-      const place = await this.placeRepo.findOne({ where: { id: user.placeId } });
-      const [placeStats, contactInfo] = await Promise.all([
-        this.getPlaceStats(user.placeId),
-        this.getContactInfoForPlace(user.placeId),
-      ]);
-
-      return {
-        ...baseStats,
-        placeId: user.placeId,
-        placeName: place?.name || null,
-        placeStats,
-        contactInfo,
-      };
     }
 
     // STAFF: Solo datos básicos (fallback)
