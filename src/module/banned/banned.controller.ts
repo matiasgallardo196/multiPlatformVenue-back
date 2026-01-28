@@ -20,6 +20,7 @@ import { BulkApproveBannedDto } from './dto/bulk-approve-banned.dto';
 import { CheckActiveBansDto } from './dto/check-active-bans.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
+import { BulkApproveDto } from './dto/bulk-approve.dto';
 import { UserRole } from '../user/user.entity';
 
 @Controller('banneds')

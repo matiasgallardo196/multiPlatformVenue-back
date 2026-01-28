@@ -30,3 +30,6 @@ export const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // Cors
 export const CORS_ORIGIN = process.env.CORS_ORIGIN;
+
+// Webhooks
+export const BAN_NOTICE_WEBHOOK_URL = process.env.BAN_NOTICE_WEBHOOK_URL;

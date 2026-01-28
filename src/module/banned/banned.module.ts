@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Banned } from 'src/shared/entities/banned.entity';
 import { Person } from 'src/shared/entities/person.entity';
@@ -11,6 +12,7 @@ import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
+    HttpModule,
     TypeOrmModule.forFeature([Banned, Person, BannedPlace, Place, BannedHistory]),
     UserModule,
   ],
