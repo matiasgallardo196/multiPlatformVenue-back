@@ -49,12 +49,19 @@ export class BannedController {
 
   @Roles(UserRole.STAFF)
   @Get()
-  findAll(@Req() req: any, @Query('sortBy') sortBy?: string) {
+  findAll(
+    @Req() req: any,
+    @Query('sortBy') sortBy?: string,
+    @Query('placeId') placeId?: string,
+    @Query('motives') motivesParam?: string,
+  ) {
     const userId = (req.user as any)?.userId;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.bannedService.findAll(userId, sortBy);
+    // Parse comma-separated motives into array
+    const motives = motivesParam ? motivesParam.split(',').map(m => m.trim()).filter(m => m.length > 0) : undefined;
+    return this.bannedService.findAll(userId, sortBy, placeId, motives);
   }
 
   @Roles(UserRole.MANAGER)

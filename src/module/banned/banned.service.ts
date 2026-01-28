@@ -527,14 +527,14 @@ export class BannedService {
     return saved;
   }
 
-  async findAll(userId: string, sortBy?: string): Promise<Banned[]> {
-    // Obtener usuario completo con place
+  async findAll(userId: string, sortBy?: string, placeId?: string, motives?: string[]): Promise<Banned[]> {
+    // Get full user with place
     const user = await this.userService.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Función helper para aplicar ordenamiento
+    // Helper function to apply sorting
     const applySorting = (queryBuilder: any, sortBy?: string) => {
       const sort = sortBy || 'violations-desc';
       switch (sort) {
@@ -568,66 +568,138 @@ export class BannedService {
       }
     };
 
-    // ADMIN: ve todos los bans aprobados
-    // Otros roles: filtrar por city y solo bans aprobados
+    // Helper function to apply motive filter
+    const applyMotiveFilter = (queryBuilder: any) => {
+      if (motives && motives.length > 0) {
+        // Filter bans that have AT LEAST ONE of the selected motives
+        // motive is a JSONB array, use ?| operator for overlap check
+        queryBuilder.andWhere('banned.motive ?| ARRAY[:...motivesList]', { motivesList: motives });
+      }
+    };
+
+    // ADMIN: sees all approved bans, can filter by placeId optionally
     if (isAdmin(user.role)) {
-      // ADMIN puede ver todos los bans aprobados
       const queryBuilder = this.bannedRepository
         .createQueryBuilder('banned')
         .leftJoinAndSelect('banned.person', 'person')
         .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
         .leftJoinAndSelect('bannedPlaces.place', 'place');
       
+      // If ADMIN specifies a placeId, filter by that place
+      if (placeId) {
+        queryBuilder
+          .where('bannedPlaces.placeId = :placeId', { placeId })
+          .andWhere('bannedPlaces.status = :approvedStatus', {
+            approvedStatus: BannedPlaceStatus.APPROVED,
+          });
+      }
+      
+      applyMotiveFilter(queryBuilder);
       applySorting(queryBuilder, sortBy);
       
       return queryBuilder.getMany()
         .then((bans) => {
-          // Filtrar para asegurar que todos los places del ban están aprobados
+          // Filter to ensure relevant places are approved
           return bans.filter((ban) => {
             if (!ban.bannedPlaces || ban.bannedPlaces.length === 0) return false;
+            if (placeId) {
+              // If placeId filter, verify that specific place is approved
+              const targetPlace = ban.bannedPlaces.find(bp => bp.placeId === placeId);
+              return targetPlace?.status === BannedPlaceStatus.APPROVED;
+            }
+            // Without placeId filter, all places must be approved
             return ban.bannedPlaces.every(
-              (bp) => bp.status === BannedPlaceStatus.APPROVED,
-            );
-          });
-        });
-    } else {
-      // Otros roles (HEAD_MANAGER, MANAGER, STAFF): filtrar por city
-      if (!user.place?.city) {
-        // Si no tiene city, retornar lista vacía
-        return [];
-      }
-
-      // Filtrar por city y solo mostrar bans donde todos los places relevantes están aprobados
-      // Un ban es visible si todos sus places que pertenecen a la city del usuario están aprobados
-      const queryBuilder = this.bannedRepository
-        .createQueryBuilder('banned')
-        .leftJoinAndSelect('banned.person', 'person')
-        .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-        .leftJoinAndSelect('bannedPlaces.place', 'place')
-        .where('place.city = :city', { city: user.place.city })
-        .andWhere('bannedPlaces.status = :approvedStatus', {
-          approvedStatus: BannedPlaceStatus.APPROVED,
-        });
-      
-      applySorting(queryBuilder, sortBy);
-      
-      return queryBuilder.getMany()
-        .then((bans) => {
-          // Filtrar para asegurar que todos los places del ban en esa city están aprobados
-          return bans.filter((ban) => {
-            const placesInCity = ban.bannedPlaces?.filter(
-              (bp) => bp.place?.city === user.place?.city,
-            ) || [];
-            if (placesInCity.length === 0) return false;
-            return placesInCity.every(
               (bp) => bp.status === BannedPlaceStatus.APPROVED,
             );
           });
         });
     }
 
-    // No debería llegar aquí, pero por seguridad retornar lista vacía
-    return [];
+    // STAFF: force filter by their placeId (ignores query param for security)
+    if (user.role === UserRole.STAFF) {
+      if (!user.placeId) {
+        return [];
+      }
+      
+      const queryBuilder = this.bannedRepository
+        .createQueryBuilder('banned')
+        .leftJoinAndSelect('banned.person', 'person')
+        .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+        .leftJoinAndSelect('bannedPlaces.place', 'place')
+        .where('bannedPlaces.placeId = :placeId', { placeId: user.placeId })
+        .andWhere('bannedPlaces.status = :approvedStatus', {
+          approvedStatus: BannedPlaceStatus.APPROVED,
+        });
+      
+      applyMotiveFilter(queryBuilder);
+      applySorting(queryBuilder, sortBy);
+      
+      return queryBuilder.getMany()
+        .then((bans) => {
+          // Filter to ensure staff's place is approved
+          return bans.filter((ban) => {
+            const staffPlace = ban.bannedPlaces?.find(bp => bp.placeId === user.placeId);
+            return staffPlace?.status === BannedPlaceStatus.APPROVED;
+          });
+        });
+    }
+
+    // MANAGER / HEAD_MANAGER: can use placeId from query, or filter by city if not provided
+    if (!user.place?.city) {
+      return [];
+    }
+
+    // If placeId from query, filter by that specific place
+    if (placeId) {
+      const queryBuilder = this.bannedRepository
+        .createQueryBuilder('banned')
+        .leftJoinAndSelect('banned.person', 'person')
+        .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+        .leftJoinAndSelect('bannedPlaces.place', 'place')
+        .where('bannedPlaces.placeId = :placeId', { placeId })
+        .andWhere('bannedPlaces.status = :approvedStatus', {
+          approvedStatus: BannedPlaceStatus.APPROVED,
+        });
+      
+      applyMotiveFilter(queryBuilder);
+      applySorting(queryBuilder, sortBy);
+      
+      return queryBuilder.getMany()
+        .then((bans) => {
+          return bans.filter((ban) => {
+            const targetPlace = ban.bannedPlaces?.find(bp => bp.placeId === placeId);
+            return targetPlace?.status === BannedPlaceStatus.APPROVED;
+          });
+        });
+    }
+
+    // Without placeId: filter by city (original logic)
+    const queryBuilder = this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoinAndSelect('banned.person', 'person')
+      .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
+      .leftJoinAndSelect('bannedPlaces.place', 'place')
+      .where('place.city = :city', { city: user.place.city })
+      .andWhere('bannedPlaces.status = :approvedStatus', {
+        approvedStatus: BannedPlaceStatus.APPROVED,
+      });
+    
+    applyMotiveFilter(queryBuilder);
+    applySorting(queryBuilder, sortBy);
+    
+    return queryBuilder.getMany()
+      .then((bans) => {
+        // Filter to ensure all places in that city are approved
+        return bans.filter((ban) => {
+          const placesInCity = ban.bannedPlaces?.filter(
+            (bp) => bp.place?.city === user.place?.city,
+          ) || [];
+          if (placesInCity.length === 0) return false;
+          return placesInCity.every(
+            (bp) => bp.status === BannedPlaceStatus.APPROVED,
+          );
+        });
+      });
   }
 
   async addViolation(bannedId: string, userId: string): Promise<Banned> {
