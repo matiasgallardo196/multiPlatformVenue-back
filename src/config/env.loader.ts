@@ -33,3 +33,7 @@ export const CORS_ORIGIN = process.env.CORS_ORIGIN;
 
 // Webhooks
 export const BAN_NOTICE_WEBHOOK_URL = process.env.BAN_NOTICE_WEBHOOK_URL;
+
+// Rate Limiting (Throttler)
+export const THROTTLE_TTL = parseInt(process.env.THROTTLE_TTL || '60000', 10); // milliseconds (default: 60 seconds)
+export const THROTTLE_LIMIT = parseInt(process.env.THROTTLE_LIMIT || '100', 10); // requests per TTL (default: 100)

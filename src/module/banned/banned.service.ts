@@ -13,6 +13,7 @@ import {
   LessThanOrEqual,
   MoreThanOrEqual,
   Repository,
+  SelectQueryBuilder,
 } from 'typeorm';
 import { Banned } from 'src/shared/entities/banned.entity';
 import { Person } from 'src/shared/entities/person.entity';
@@ -27,6 +28,7 @@ import { UserRole } from '../user/user.entity';
 import { lastValueFrom } from 'rxjs';
 import { BAN_NOTICE_WEBHOOK_URL } from '../../config/env.loader';
 import { hasRoleOrAbove, isAdmin } from '../auth/role-utils';
+import { BannedSortOption, getSortOptionOrDefault } from './banned-sort.enum';
 
 @Injectable()
 export class BannedService {
@@ -534,42 +536,42 @@ export class BannedService {
       throw new NotFoundException('User not found');
     }
 
-    // Helper function to apply sorting
-    const applySorting = (queryBuilder: any, sortBy?: string) => {
-      const sort = sortBy || 'violations-desc';
+    // Helper function to apply sorting with type safety
+    const applySorting = (queryBuilder: SelectQueryBuilder<Banned>, sortBy?: string): void => {
+      const sort = getSortOptionOrDefault(sortBy);
       switch (sort) {
-        case 'violations-asc':
+        case BannedSortOption.VIOLATIONS_ASC:
           queryBuilder.orderBy('banned.violationsCount', 'ASC');
           break;
-        case 'starting-date-desc':
+        case BannedSortOption.STARTING_DATE_DESC:
           queryBuilder.orderBy('banned.startingDate', 'DESC');
           break;
-        case 'starting-date-asc':
+        case BannedSortOption.STARTING_DATE_ASC:
           queryBuilder.orderBy('banned.startingDate', 'ASC');
           break;
-        case 'ending-date-desc':
+        case BannedSortOption.ENDING_DATE_DESC:
           queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
             .addOrderBy('banned.endingDate', 'DESC');
           break;
-        case 'ending-date-asc':
+        case BannedSortOption.ENDING_DATE_ASC:
           queryBuilder.addOrderBy('CASE WHEN banned.endingDate IS NULL THEN 1 ELSE 0 END', 'ASC')
             .addOrderBy('banned.endingDate', 'ASC');
           break;
-        case 'person-name-asc':
+        case BannedSortOption.PERSON_NAME_ASC:
           queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
           break;
-        case 'person-name-desc':
+        case BannedSortOption.PERSON_NAME_DESC:
           queryBuilder.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
           break;
-        case 'violations-desc':
+        case BannedSortOption.VIOLATIONS_DESC:
         default:
           queryBuilder.orderBy('banned.violationsCount', 'DESC');
           break;
       }
     };
 
-    // Helper function to apply motive filter
-    const applyMotiveFilter = (queryBuilder: any) => {
+    // Helper function to apply motive filter with type safety
+    const applyMotiveFilter = (queryBuilder: SelectQueryBuilder<Banned>): void => {
       if (motives && motives.length > 0) {
         // Filter bans that have AT LEAST ONE of the selected motives
         // motive is a JSONB array, use ?| operator for overlap check
@@ -1819,6 +1821,7 @@ export class BannedService {
    */
   async getBanHistoryStats(
     personId: string,
+    userId: string,
   ): Promise<{
     personId: string;
     totalBans: number;
@@ -1831,6 +1834,12 @@ export class BannedService {
       lastBanDate: Date | null;
     }>;
   }> {
+    // Validate user authorization
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     const now = new Date();
     
     // Obtener todos los baneos de la persona
@@ -1840,26 +1849,35 @@ export class BannedService {
       order: { startingDate: 'DESC' },
     });
 
+    // Filter bans based on user access (ADMIN sees all, others see only their city)
+    const accessibleBans = isAdmin(user.role)
+      ? allBans
+      : allBans.filter((ban) => 
+          ban.bannedPlaces?.some((bp) => bp.place?.city === user.place?.city)
+        );
+
     // Contar baneos activos y expirados
-    const activeBans = allBans.filter((ban) => {
+    const activeBans = accessibleBans.filter((ban) => {
       if (!ban.startingDate) return false;
       return ban.startingDate <= now && (!ban.endingDate || ban.endingDate >= now);
     });
-    const expiredBans = allBans.filter((ban) => {
+    const expiredBans = accessibleBans.filter((ban) => {
       if (!ban.startingDate) return false;
       return ban.endingDate && ban.endingDate < now;
     });
 
-    // Obtener estadísticas por lugar
+    // Obtener estadísticas por lugar (only for places user can access)
     const placeStatsMap = new Map<
       string,
       { placeId: string; placeName: string; totalBans: number; lastBanDate: Date | null }
     >();
 
-    for (const ban of allBans) {
+    for (const ban of accessibleBans) {
       if (ban.bannedPlaces) {
         for (const bannedPlace of ban.bannedPlaces) {
-          if (bannedPlace.status === BannedPlaceStatus.APPROVED) {
+          // Only include places the user has access to
+          const hasAccess = isAdmin(user.role) || bannedPlace.place?.city === user.place?.city;
+          if (bannedPlace.status === BannedPlaceStatus.APPROVED && hasAccess) {
             const placeId = bannedPlace.placeId;
             const placeName = bannedPlace.place?.name || placeId;
             
@@ -1884,7 +1902,7 @@ export class BannedService {
 
     return {
       personId,
-      totalBans: allBans.length,
+      totalBans: accessibleBans.length,
       activeBansCount: activeBans.length,
       expiredBansCount: expiredBans.length,
       byPlace: Array.from(placeStatsMap.values()),
@@ -1893,22 +1911,51 @@ export class BannedService {
 
   async isPersonBanned(
     personId: string,
+    userId: string,
   ): Promise<{ personId: string; isBanned: boolean; activeCount: number }> {
+    // Validate user authorization
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     const now = new Date();
-    const activeCount = await this.bannedRepository.count({
-      where: [
-        {
-          person: { id: personId },
-          startingDate: LessThanOrEqual(now),
-          endingDate: IsNull(),
-        },
-        {
-          person: { id: personId },
-          startingDate: LessThanOrEqual(now),
-          endingDate: MoreThanOrEqual(now),
-        },
-      ],
-    });
-    return { personId, isBanned: activeCount > 0, activeCount };
+
+    // ADMIN: can see all active bans
+    if (isAdmin(user.role)) {
+      const activeCount = await this.bannedRepository.count({
+        where: [
+          {
+            person: { id: personId },
+            startingDate: LessThanOrEqual(now),
+            endingDate: IsNull(),
+          },
+          {
+            person: { id: personId },
+            startingDate: LessThanOrEqual(now),
+            endingDate: MoreThanOrEqual(now),
+          },
+        ],
+      });
+      return { personId, isBanned: activeCount > 0, activeCount };
+    }
+
+    // Non-ADMIN: count only bans in their city
+    if (!user.place?.city) {
+      return { personId, isBanned: false, activeCount: 0 };
+    }
+
+    const activeBans = await this.bannedRepository
+      .createQueryBuilder('banned')
+      .leftJoin('banned.bannedPlaces', 'bp')
+      .leftJoin('bp.place', 'place')
+      .where('banned.personId = :personId', { personId })
+      .andWhere('banned.startingDate <= :now', { now })
+      .andWhere('(banned.endingDate IS NULL OR banned.endingDate >= :now)', { now })
+      .andWhere('bp.status = :approvedStatus', { approvedStatus: BannedPlaceStatus.APPROVED })
+      .andWhere('place.city = :city', { city: user.place.city })
+      .getCount();
+
+    return { personId, isBanned: activeBans > 0, activeCount: activeBans };
   }
 }

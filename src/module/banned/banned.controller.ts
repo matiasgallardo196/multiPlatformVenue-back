@@ -101,14 +101,22 @@ export class BannedController {
 
   @Roles(UserRole.MANAGER)
   @Get('person/:personId/stats')
-  getBanHistoryStats(@Param('personId') personId: string) {
-    return this.bannedService.getBanHistoryStats(personId);
+  getBanHistoryStats(@Param('personId') personId: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.getBanHistoryStats(personId, userId);
   }
 
   @Roles(UserRole.MANAGER)
   @Get('person/:personId/active')
-  isPersonBanned(@Param('personId') personId: string) {
-    return this.bannedService.isPersonBanned(personId);
+  isPersonBanned(@Param('personId') personId: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.isPersonBanned(personId, userId);
   }
 
   @Roles(UserRole.HEAD_MANAGER)
