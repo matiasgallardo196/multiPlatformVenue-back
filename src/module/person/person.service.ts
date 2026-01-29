@@ -2,13 +2,18 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Person } from 'src/shared/entities/person.entity';
 import { Banned } from 'src/shared/entities/banned.entity';
+import { PersonPlaceAccess, PersonAccessType } from 'src/shared/entities/personPlaceAccess.entity';
+import { PlaceSettings } from 'src/shared/entities/placeSettings.entity';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
+import { UserService } from '../user/user.service';
+import { isAdmin } from '../auth/role-utils';
 
 @Injectable()
 export class PersonService {
@@ -17,6 +22,11 @@ export class PersonService {
     private readonly personRepository: Repository<Person>,
     @InjectRepository(Banned)
     private readonly bannedRepository: Repository<Banned>,
+    @InjectRepository(PersonPlaceAccess)
+    private readonly accessRepository: Repository<PersonPlaceAccess>,
+    @InjectRepository(PlaceSettings)
+    private readonly settingsRepository: Repository<PlaceSettings>,
+    private readonly userService: UserService,
   ) {}
 
   private toTitleCase(value?: string | null): string | undefined {
@@ -64,15 +74,18 @@ export class PersonService {
 
   private generateDiceBearUrl(seed: string, gender?: 'Male' | 'Female'): string {
     const safeSeed = encodeURIComponent(seed);
-    // Color de fondo por género (tonos más fuertes)
-    // Male: azul intenso | Female: rosa intenso
     const bg = gender === 'Male' ? '3b82f6' : gender === 'Female' ? 'ec4899' : '9ca3af';
     return `https://api.dicebear.com/7.x/initials/svg?seed=${safeSeed}&radius=50&fontFamily=Arial&fontWeight=700&backgroundColor=${bg}`;
   }
 
-  async create(data: CreatePersonDto): Promise<Person> {
+  /**
+   * Create a person and automatically create PersonPlaceAccess for the user's place
+   */
+  async create(data: CreatePersonDto, userId: string): Promise<Person> {
+    const user = await this.userService.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
     const normalized = this.normalizeNames(data);
-    // If no images provided, set a default DiceBear avatar with initials
     if (!normalized.imagenProfileUrl || normalized.imagenProfileUrl.length === 0) {
       const initials = this.getInitials(normalized.name, normalized.lastName, normalized.nickname);
       if (initials) {
@@ -80,25 +93,97 @@ export class PersonService {
       }
     }
     const person = this.personRepository.create(normalized);
-    return this.personRepository.save(person);
+    const saved = await this.personRepository.save(person);
+
+    // Create PersonPlaceAccess for the user's place (if they have one)
+    if (user.placeId) {
+      const access = this.accessRepository.create({
+        personId: saved.id,
+        placeId: user.placeId,
+        accessType: PersonAccessType.OWNER,
+        grantedByUserId: userId,
+      });
+      await this.accessRepository.save(access);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Get all accessible person IDs for a user's place
+   */
+  private async getAccessiblePersonIds(userId: string): Promise<string[] | null> {
+    const user = await this.userService.findById(userId);
+    if (!user) return null;
+
+    // ADMIN sees all
+    if (isAdmin(user.role)) {
+      return null; // null means no filter
+    }
+
+    if (!user.placeId) {
+      return []; // No place = no access
+    }
+
+    // Get persons this place has direct access to
+    const directAccess = await this.accessRepository.find({
+      where: { placeId: user.placeId },
+      select: ['personId'],
+    });
+    const directIds = directAccess.map((a) => a.personId);
+
+    // Get persons from venues that share with this place
+    const sharingVenues = await this.settingsRepository.find({
+      where: { sharePersons: true },
+    });
+
+    const sharingWithUs = sharingVenues.filter((s) =>
+      s.sharePersonsWithPlaceIds.includes(user.placeId!),
+    );
+
+    const sharedPlaceIds = sharingWithUs.map((s) => s.placeId);
+
+    let sharedPersonIds: string[] = [];
+    if (sharedPlaceIds.length > 0) {
+      const sharedAccess = await this.accessRepository.find({
+        where: { placeId: In(sharedPlaceIds) },
+        select: ['personId'],
+      });
+      sharedPersonIds = sharedAccess.map((a) => a.personId);
+    }
+
+    // Combine and deduplicate
+    const allIds = new Set([...directIds, ...sharedPersonIds]);
+    return Array.from(allIds);
   }
 
   async findAll(
+    userId: string,
     filters?: {
-    gender?: 'Male' | 'Female' | null;
-    search?: string;
-    sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+      gender?: 'Male' | 'Female' | null;
+      search?: string;
+      sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
     },
     options?: { page?: number; limit?: number; fields?: string[] },
   ): Promise<{ items: Person[]; total: number; page: number; limit: number; hasNext: boolean }> {
+    const accessibleIds = await this.getAccessiblePersonIds(userId);
+
     const qb = this.personRepository.createQueryBuilder('person');
 
-    // Filtro por género
+    // Filter by accessible persons (null = no filter for ADMIN)
+    if (accessibleIds !== null) {
+      if (accessibleIds.length === 0) {
+        return { items: [], total: 0, page: 1, limit: options?.limit || 20, hasNext: false };
+      }
+      qb.andWhere('person.id IN (:...accessibleIds)', { accessibleIds });
+    }
+
+    // Filter by gender
     if (filters?.gender !== undefined && filters.gender !== null) {
       qb.andWhere('person.gender = :gender', { gender: filters.gender });
     }
 
-    // Filtro por búsqueda (nombre, apellido, nickname)
+    // Filter by search
     if (filters?.search && filters.search.trim()) {
       const searchTerm = `%${filters.search.trim().toLowerCase()}%`;
       qb.andWhere(
@@ -107,18 +192,16 @@ export class PersonService {
       );
     }
 
-    // Ordenamiento
+    // Sorting
     const sortBy = filters?.sortBy || 'newest-first';
     switch (sortBy) {
       case 'oldest-first':
         qb.orderBy('person.createdAt', 'ASC');
         break;
       case 'name-asc':
-        // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
         qb.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'ASC');
         break;
       case 'name-desc':
-        // Ordenar por nombre completo (nombre + apellido), usando COALESCE para manejar NULLs
         qb.orderBy('COALESCE(person.name, \'\') || \' \' || COALESCE(person.lastName, \'\') || \' \' || COALESCE(person.nickname, \'\')', 'DESC');
         break;
       case 'newest-first':
@@ -128,7 +211,6 @@ export class PersonService {
     }
 
     if (options?.fields && options.fields.length > 0) {
-      // Mapear a columnas válidas del entity Person
       const allowed = new Set([
         'id', 'name', 'lastName', 'nickname', 'gender', 'createdAt', 'updatedAt',
         'documentNumber', 'city', 'imagenProfileUrl',
@@ -146,28 +228,64 @@ export class PersonService {
     return { items, total, page, limit, hasNext };
   }
 
-  async findOne(id: string): Promise<Person> {
+  async findOne(id: string, userId: string): Promise<Person> {
+    const accessibleIds = await this.getAccessiblePersonIds(userId);
+
     const person = await this.personRepository.findOne({
       where: { id },
     });
     if (!person) throw new NotFoundException('Person not found');
+
+    // Check access
+    if (accessibleIds !== null && !accessibleIds.includes(id)) {
+      throw new ForbiddenException('You do not have access to this person');
+    }
+
     return person;
   }
 
-  async update(id: string, data: UpdatePersonDto): Promise<Person> {
-    const person = await this.findOne(id);
+  async update(id: string, data: UpdatePersonDto, userId: string): Promise<Person> {
+    const user = await this.userService.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    const person = await this.personRepository.findOne({ where: { id } });
+    if (!person) throw new NotFoundException('Person not found');
+
+    // Check if user has owner access (not just shared)
+    if (!isAdmin(user.role) && user.placeId) {
+      const access = await this.accessRepository.findOne({
+        where: { personId: id, placeId: user.placeId },
+      });
+      if (!access || access.accessType !== PersonAccessType.OWNER) {
+        throw new ForbiddenException('Only the venue that created this person can edit their details');
+      }
+    }
+
     const normalized = this.normalizeNames(data);
     Object.assign(person, normalized);
     return this.personRepository.save(person);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, userId: string): Promise<void> {
+    const user = await this.userService.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
     const person = await this.personRepository.findOne({
       where: { id },
     });
     if (!person) throw new NotFoundException('Person not found');
 
-    // Verificar si tiene CUALQUIER ban (activo, pendiente o expirado)
+    // Check owner access
+    if (!isAdmin(user.role) && user.placeId) {
+      const access = await this.accessRepository.findOne({
+        where: { personId: id, placeId: user.placeId },
+      });
+      if (!access || access.accessType !== PersonAccessType.OWNER) {
+        throw new ForbiddenException('Only the venue that created this person can delete them');
+      }
+    }
+
+    // Verify no bans exist
     const banCount = await this.bannedRepository.count({
       where: { person: { id } },
     });
@@ -182,3 +300,4 @@ export class PersonService {
     if (result.affected === 0) throw new NotFoundException('Person not found');
   }
 }
+

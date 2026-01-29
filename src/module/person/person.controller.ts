@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { Header } from '@nestjs/common';
@@ -25,8 +26,10 @@ export class PersonController {
 
   @Roles(UserRole.MANAGER)
   @Post()
-  create(@Body() body: CreatePersonDto) {
-    return this.personService.create(body);
+  create(@Body() body: CreatePersonDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+    return this.personService.create(body, userId);
   }
 
   @Roles(UserRole.STAFF)
@@ -39,7 +42,11 @@ export class PersonController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('fields') fields?: string,
+    @Req() req?: any,
   ) {
+    const userId = (req?.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+
     const filters: {
       gender?: 'Male' | 'Female' | null;
       search?: string;
@@ -65,6 +72,7 @@ export class PersonController {
     const selectFields = (fields || '').split(',').map((f) => f.trim()).filter(Boolean);
 
     return this.personService.findAll(
+      userId,
       Object.keys(filters).length > 0 ? filters : undefined,
       { page: pageNum, limit: limitNum, fields: selectFields.length ? selectFields : undefined },
     );
@@ -72,19 +80,26 @@ export class PersonController {
 
   @Roles(UserRole.STAFF)
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.personService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+    return this.personService.findOne(id, userId);
   }
 
   @Roles(UserRole.MANAGER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() body: UpdatePersonDto) {
-    return this.personService.update(id, body);
+  update(@Param('id') id: string, @Body() body: UpdatePersonDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+    return this.personService.update(id, body, userId);
   }
 
   @Roles(UserRole.MANAGER)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.personService.remove(id);
+  remove(@Param('id') id: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+    return this.personService.remove(id, userId);
   }
 }
+

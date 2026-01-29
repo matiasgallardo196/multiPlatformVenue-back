@@ -20,6 +20,7 @@ import { Person } from 'src/shared/entities/person.entity';
 import { BannedPlace, BannedPlaceStatus } from 'src/shared/entities/bannedPlace.entity';
 import { Place } from 'src/shared/entities/place.entity';
 import { BannedHistory, BannedHistoryAction } from 'src/shared/entities/bannedHistory.entity';
+import { PersonPlaceAccess, PersonAccessType } from 'src/shared/entities/personPlaceAccess.entity';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
 import { UserService } from '../user/user.service';
@@ -46,6 +47,8 @@ export class BannedService {
     private readonly placeRepository: Repository<Place>,
     @InjectRepository(BannedHistory)
     private readonly bannedHistoryRepository: Repository<BannedHistory>,
+    @InjectRepository(PersonPlaceAccess)
+    private readonly personPlaceAccessRepository: Repository<PersonPlaceAccess>,
     private readonly userService: UserService,
     private readonly httpService: HttpService,
   ) {}
@@ -1210,7 +1213,7 @@ export class BannedService {
     }
 
     if (approved) {
-      // Aprobar: actualizar estado
+      // Approve: update status
       bannedPlace.status = BannedPlaceStatus.APPROVED;
       bannedPlace.approvedByUserId = userId;
       bannedPlace.approvedAt = new Date();
@@ -1218,7 +1221,25 @@ export class BannedService {
       bannedPlace.rejectedAt = null;
       await this.bannedPlaceRepository.save(bannedPlace);
 
-      // Registrar aprobación en historial
+      // Create PersonPlaceAccess for this venue (if not already exists)
+      const personId = banned.person?.id;
+      if (personId) {
+        const existingAccess = await this.personPlaceAccessRepository.findOne({
+          where: { personId, placeId },
+        });
+        if (!existingAccess) {
+          await this.personPlaceAccessRepository.save(
+            this.personPlaceAccessRepository.create({
+              personId,
+              placeId,
+              accessType: PersonAccessType.SHARED,
+              grantedByUserId: userId,
+            }),
+          );
+        }
+      }
+
+      // Record approval in history
       await this.bannedHistoryRepository.save(
         this.bannedHistoryRepository.create({
           bannedId,
