@@ -11,6 +11,7 @@ import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
 import { AuthModule } from './module/auth/auth.module';
 import { UserModule } from './module/user/user.module';
 import { DashboardModule } from './module/dashboard/dashboard.module';
+import { PlaceSettingsModule } from './module/place-settings/place-settings.module';
 import { JwtAuthGuard } from './module/auth/jwt-auth.guard';
 import { RolesGuard } from './module/auth/roles.guard';
 import { THROTTLE_TTL, THROTTLE_LIMIT } from './config/env.loader';
@@ -30,6 +31,7 @@ import { THROTTLE_TTL, THROTTLE_LIMIT } from './config/env.loader';
     AuthModule,
     UserModule,
     DashboardModule,
+    PlaceSettingsModule,
   ],
   controllers: [AppController],
   providers: [
