@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './db/database.module';
@@ -10,11 +11,18 @@ import { CloudinaryModule } from './module/cloudinary/cloudinary.module';
 import { AuthModule } from './module/auth/auth.module';
 import { UserModule } from './module/user/user.module';
 import { DashboardModule } from './module/dashboard/dashboard.module';
+import { PlaceSettingsModule } from './module/place-settings/place-settings.module';
 import { JwtAuthGuard } from './module/auth/jwt-auth.guard';
 import { RolesGuard } from './module/auth/roles.guard';
+import { THROTTLE_TTL, THROTTLE_LIMIT } from './config/env.loader';
 
 @Module({
   imports: [
+    // Rate limiting configured via environment variables
+    ThrottlerModule.forRoot([{
+      ttl: THROTTLE_TTL,
+      limit: THROTTLE_LIMIT,
+    }]),
     DatabaseModule,
     PersonModule,
     BannedModule,
@@ -23,10 +31,15 @@ import { RolesGuard } from './module/auth/roles.guard';
     AuthModule,
     UserModule,
     DashboardModule,
+    PlaceSettingsModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
@@ -38,3 +51,4 @@ import { RolesGuard } from './module/auth/roles.guard';
   ],
 })
 export class AppModule {}
+

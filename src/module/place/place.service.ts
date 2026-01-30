@@ -77,8 +77,12 @@ export class PlaceService {
       throw new NotFoundException('User not found');
     }
 
-    // HEAD_MANAGER solo puede modificar placeEmail
+    // HEAD_MANAGER solo puede modificar placeEmail de su propio place
     if (user.role === UserRole.HEAD_MANAGER) {
+      // Verificar que el HEAD_MANAGER solo pueda modificar su propio place
+      if (user.placeId !== id) {
+        throw new ForbiddenException('Head manager can only modify their own place');
+      }
       if (data.name !== undefined || data.city !== undefined) {
         throw new ForbiddenException('Head manager can only modify place email');
       }
