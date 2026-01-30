@@ -42,6 +42,9 @@ export class PersonController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('fields') fields?: string,
+    @Query('banStatus') banStatus?: string,
+    @Query('accessType') accessType?: string,
+    @Query('ownerPlaceId') ownerPlaceId?: string,
     @Req() req?: any,
   ) {
     const userId = (req?.user as any)?.userId;
@@ -51,6 +54,9 @@ export class PersonController {
       gender?: 'Male' | 'Female' | null;
       search?: string;
       sortBy?: 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+      banStatus?: 'active' | 'pending' | 'expired' | 'none';
+      accessType?: 'owner' | 'shared';
+      ownerPlaceId?: string;
     } = {};
 
     if (gender === 'Male' || gender === 'Female') {
@@ -65,6 +71,18 @@ export class PersonController {
 
     if (sortBy && ['newest-first', 'oldest-first', 'name-asc', 'name-desc'].includes(sortBy)) {
       filters.sortBy = sortBy as 'newest-first' | 'oldest-first' | 'name-asc' | 'name-desc';
+    }
+
+    if (banStatus && ['active', 'pending', 'expired', 'none'].includes(banStatus)) {
+      filters.banStatus = banStatus as 'active' | 'pending' | 'expired' | 'none';
+    }
+
+    if (accessType && ['owner', 'shared'].includes(accessType)) {
+      filters.accessType = accessType as 'owner' | 'shared';
+    }
+
+    if (ownerPlaceId) {
+      filters.ownerPlaceId = ownerPlaceId;
     }
 
     const pageNum = Math.max(1, Number(page || '1'));
@@ -101,5 +119,14 @@ export class PersonController {
     if (!userId) throw new Error('User ID not found in request');
     return this.personService.remove(id, userId);
   }
+
+  @Roles(UserRole.MANAGER)
+  @Get(':id/history')
+  getHistory(@Param('id') id: string, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) throw new Error('User ID not found in request');
+    return this.personService.getHistory(id, userId);
+  }
 }
+
 
