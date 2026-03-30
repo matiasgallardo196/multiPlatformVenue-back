@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
@@ -20,9 +21,11 @@ import { Person } from 'src/shared/entities/person.entity';
 import { BannedPlace, BannedPlaceStatus } from 'src/shared/entities/bannedPlace.entity';
 import { Place } from 'src/shared/entities/place.entity';
 import { BannedHistory, BannedHistoryAction } from 'src/shared/entities/bannedHistory.entity';
+import { PlaceSettings } from 'src/shared/entities/placeSettings.entity';
 import { PersonPlaceAccess, PersonAccessType } from 'src/shared/entities/personPlaceAccess.entity';
 import { CreateBannedDto } from './dto/create-banned.dto';
 import { UpdateBannedDto } from './dto/update-banned.dto';
+import { ImportBansDto, ImportBansFilter } from './dto/import-bans.dto';
 import { UserService } from '../user/user.service';
 import { BulkApproveDto } from './dto/bulk-approve.dto';
 import { UserRole } from '../user/user.entity';
@@ -49,6 +52,8 @@ export class BannedService {
     private readonly bannedHistoryRepository: Repository<BannedHistory>,
     @InjectRepository(PersonPlaceAccess)
     private readonly personPlaceAccessRepository: Repository<PersonPlaceAccess>,
+    @InjectRepository(PlaceSettings)
+    private readonly placeSettingsRepository: Repository<PlaceSettings>,
     private readonly userService: UserService,
     private readonly httpService: HttpService,
   ) {}
@@ -612,8 +617,8 @@ export class BannedService {
               const targetPlace = ban.bannedPlaces.find(bp => bp.placeId === placeId);
               return targetPlace?.status === BannedPlaceStatus.APPROVED;
             }
-            // Without placeId filter, all places must be approved
-            return ban.bannedPlaces.every(
+            // Without placeId filter, show bans with at least one approved place
+            return ban.bannedPlaces.some(
               (bp) => bp.status === BannedPlaceStatus.APPROVED,
             );
           });
@@ -1978,5 +1983,134 @@ export class BannedService {
       .getCount();
 
     return { personId, isBanned: activeBans > 0, activeCount: activeBans };
+  }
+
+  /**
+   * Importa todos los baneos aprobados del Local A hacia el Local B como PENDING,
+   * para que el HEAD_MANAGER de B los apruebe desde su cola de aprobación.
+   *
+   * - ADMIN: puede importar entre cualquier par de locales (targetPlaceId requerido en body)
+   * - HEAD_MANAGER: solo puede importar hacia su propio local, y solo si
+   *   PlaceSettings.acceptBansFromPlaceIds incluye el sourcePlaceId
+   */
+  async importBansFromPlace(
+    dto: ImportBansDto,
+    userId: string,
+  ): Promise<{ imported: number; skipped: number; personsGranted: number }> {
+    const user = await this.userService.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    // Solo ADMIN puede importar baneos
+    if (!isAdmin(user.role)) {
+      throw new ForbiddenException('Only ADMIN can import bans');
+    }
+    if (!dto.targetPlaceId) {
+      throw new BadRequestException('targetPlaceId is required');
+    }
+    const targetPlaceId = dto.targetPlaceId;
+
+    if (dto.sourcePlaceId === targetPlaceId) {
+      throw new BadRequestException('Source and target places must be different');
+    }
+
+    // Validar que ambos locales existen
+    const [sourcePlace, targetPlace] = await Promise.all([
+      this.placeRepository.findOne({ where: { id: dto.sourcePlaceId } }),
+      this.placeRepository.findOne({ where: { id: targetPlaceId } }),
+    ]);
+    if (!sourcePlace) throw new NotFoundException('Source place not found');
+    if (!targetPlace) throw new NotFoundException('Target place not found');
+
+    // Obtener BannedPlace aprobados del local origen
+    const filter = dto.filter ?? ImportBansFilter.ACTIVE_ONLY;
+    const query = this.bannedPlaceRepository
+      .createQueryBuilder('bp')
+      .innerJoinAndSelect('bp.banned', 'banned')
+      .innerJoinAndSelect('banned.person', 'person')
+      .where('bp.placeId = :sourcePlaceId', { sourcePlaceId: dto.sourcePlaceId })
+      .andWhere('bp.status = :status', { status: BannedPlaceStatus.APPROVED });
+
+    if (filter === ImportBansFilter.ACTIVE_ONLY) {
+      const now = new Date();
+      query
+        .andWhere('banned.startingDate <= :now', { now })
+        .andWhere('(banned.endingDate IS NULL OR banned.endingDate >= :now)', { now });
+    }
+
+    const sourceBannedPlaces = await query.getMany();
+
+    if (sourceBannedPlaces.length === 0) {
+      return { imported: 0, skipped: 0, personsGranted: 0 };
+    }
+
+    const bannedIdsFromSource = sourceBannedPlaces.map((bp) => bp.bannedId);
+
+    // Detectar cuáles ya existen en el destino para no duplicar
+    const existingInTarget = await this.bannedPlaceRepository.find({
+      where: { bannedId: In(bannedIdsFromSource), placeId: targetPlaceId },
+    });
+    const existingBannedIds = new Set(existingInTarget.map((bp) => bp.bannedId));
+
+    const toImport = sourceBannedPlaces.filter(
+      (bp) => !existingBannedIds.has(bp.bannedId),
+    );
+    const skipped = sourceBannedPlaces.length - toImport.length;
+
+    if (toImport.length === 0) {
+      return { imported: 0, skipped, personsGranted: 0 };
+    }
+
+    const personIds = [...new Set(toImport.map((bp) => bp.banned.person.id))];
+
+    // Detectar personas que aún no tienen acceso en el local destino
+    const existingAccess = await this.personPlaceAccessRepository.find({
+      where: { personId: In(personIds), placeId: targetPlaceId },
+    });
+    const existingAccessPersonIds = new Set(existingAccess.map((a) => a.personId));
+
+    // Crear BannedPlace con status PENDING para el local destino
+    const newBannedPlaces = toImport.map((bp) =>
+      this.bannedPlaceRepository.create({
+        bannedId: bp.bannedId,
+        placeId: targetPlaceId,
+        status: BannedPlaceStatus.PENDING,
+      }),
+    );
+    await this.bannedPlaceRepository.save(newBannedPlaces);
+
+    // Dar acceso SHARED a las personas que el local B aún no ve
+    const newPersonIds = personIds.filter((id) => !existingAccessPersonIds.has(id));
+    if (newPersonIds.length > 0) {
+      const newAccesses = newPersonIds.map((personId) =>
+        this.personPlaceAccessRepository.create({
+          personId,
+          placeId: targetPlaceId,
+          accessType: PersonAccessType.SHARED,
+          grantedByUserId: userId,
+        }),
+      );
+      await this.personPlaceAccessRepository.save(newAccesses);
+    }
+
+    // Registrar en BannedHistory para auditoría
+    const historyEntries = toImport.map((bp) =>
+      this.bannedHistoryRepository.create({
+        bannedId: bp.bannedId,
+        action: BannedHistoryAction.PLACE_ADDED,
+        performedByUserId: userId,
+        placeId: targetPlaceId,
+        details: {
+          importedFrom: dto.sourcePlaceId,
+          status: BannedPlaceStatus.PENDING,
+        },
+      }),
+    );
+    await this.bannedHistoryRepository.save(historyEntries);
+
+    return {
+      imported: toImport.length,
+      skipped,
+      personsGranted: newPersonIds.length,
+    };
   }
 }

@@ -7,6 +7,7 @@ import { BannedPlace } from 'src/shared/entities/bannedPlace.entity';
 import { Place } from 'src/shared/entities/place.entity';
 import { BannedHistory } from 'src/shared/entities/bannedHistory.entity';
 import { PersonPlaceAccess } from 'src/shared/entities/personPlaceAccess.entity';
+import { PlaceSettings } from 'src/shared/entities/placeSettings.entity';
 import { BannedService } from './banned.service';
 import { BannedController } from './banned.controller';
 import { UserModule } from '../user/user.module';
@@ -14,7 +15,7 @@ import { UserModule } from '../user/user.module';
 @Module({
   imports: [
     HttpModule,
-    TypeOrmModule.forFeature([Banned, Person, BannedPlace, Place, BannedHistory, PersonPlaceAccess]),
+    TypeOrmModule.forFeature([Banned, Person, BannedPlace, Place, BannedHistory, PersonPlaceAccess, PlaceSettings]),
     UserModule,
   ],
   providers: [BannedService],
