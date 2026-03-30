@@ -593,7 +593,8 @@ export class BannedService {
         .createQueryBuilder('banned')
         .leftJoinAndSelect('banned.person', 'person')
         .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
-        .leftJoinAndSelect('bannedPlaces.place', 'place');
+        .leftJoinAndSelect('bannedPlaces.place', 'place')
+        .leftJoinAndSelect('banned.createdBy', 'createdBy');
       
       // If ADMIN specifies a placeId, filter using a separate join so all bannedPlaces are still loaded
       if (placeId) {
@@ -629,6 +630,7 @@ export class BannedService {
         .leftJoinAndSelect('banned.person', 'person')
         .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
         .leftJoinAndSelect('bannedPlaces.place', 'place')
+        .leftJoinAndSelect('banned.createdBy', 'createdBy')
         .innerJoin(
           'banned.bannedPlaces',
           'filterBp',
@@ -654,6 +656,7 @@ export class BannedService {
         .leftJoinAndSelect('banned.person', 'person')
         .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
         .leftJoinAndSelect('bannedPlaces.place', 'place')
+        .leftJoinAndSelect('banned.createdBy', 'createdBy')
         .innerJoin(
           'banned.bannedPlaces',
           'filterBp',
@@ -673,6 +676,7 @@ export class BannedService {
       .leftJoinAndSelect('banned.person', 'person')
       .leftJoinAndSelect('banned.bannedPlaces', 'bannedPlaces')
       .leftJoinAndSelect('bannedPlaces.place', 'place')
+      .leftJoinAndSelect('banned.createdBy', 'createdBy')
       .where('place.city = :city', { city: user.place.city })
       .andWhere('bannedPlaces.status = :approvedStatus', {
         approvedStatus: BannedPlaceStatus.APPROVED,
