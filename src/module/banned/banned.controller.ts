@@ -18,6 +18,7 @@ import { UpdateBannedDto } from './dto/update-banned.dto';
 import { ApproveBannedPlaceDto } from './dto/approve-banned-place.dto';
 import { BulkApproveBannedDto } from './dto/bulk-approve-banned.dto';
 import { CheckActiveBansDto } from './dto/check-active-bans.dto';
+import { ImportBansDto } from './dto/import-bans.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { BulkApproveDto } from './dto/bulk-approve.dto';
@@ -141,6 +142,16 @@ export class BannedController {
       throw new Error('User ID not found in request');
     }
     return this.bannedService.bulkApprovePlaces(userId, body);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Post('import')
+  importBans(@Body() body: ImportBansDto, @Req() req: any) {
+    const userId = (req.user as any)?.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.bannedService.importBansFromPlace(body, userId);
   }
 
   @Roles(UserRole.STAFF)
